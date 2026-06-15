@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.log
+
+# Audit output (raw evidence — keep out of VCS by default)
+output/
+runs/
+*.har
+*.png
+
+# Word docs — may contain client audit data; keep out of VCS by default.
+# (Add the generic template explicitly with `git add -f` if you want it tracked.)
+*.docx
+~$*
+
+# Local env
+.env
+.env.local

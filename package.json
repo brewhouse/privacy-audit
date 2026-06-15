@@ -1,0 +1,32 @@
+{
+  "name": "privacy-audit-crawler",
+  "version": "0.1.0",
+  "description": "Internal CLI that audits a website's third-party tracking and consent behavior across all pages, recording what fires before vs. after consent.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "privacy-audit": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "@duckduckgo/autoconsent": "^10.16.0",
+    "commander": "^12.1.0",
+    "fast-xml-parser": "^4.5.0",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
