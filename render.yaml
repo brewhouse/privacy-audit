@@ -1,0 +1,40 @@
+# Render Blueprint — hosted privacy-audit API.
+# Deploy: push to GitHub, then in Render → New → Blueprint, point at this repo.
+# Secrets (sync: false) must be set in the Render dashboard after the first deploy.
+services:
+  - type: web
+    name: privacy-audit
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard            # Chromium needs real memory; free/starter (512MB) will OOM.
+    region: oregon
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # --- Auth & scope (required) ---
+      - key: AUDIT_API_TOKEN          # Bearer token clients must send. Generate a strong value.
+        sync: false
+      - key: ALLOWED_DOMAINS          # Comma-separated host suffixes you're authorized to scan,
+        sync: false                   # e.g. "planeteria.com,client-one.com". Empty = open (not recommended).
+
+      # --- Concurrency & limits ---
+      - key: AUDIT_CONCURRENCY
+        value: "1"                    # Chromium is heavy; raise only on a larger plan.
+      - key: MAX_PAGES_LIMIT
+        value: "100"
+
+      # --- Object storage for evidence (S3 or Cloudflare R2) ---
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: auto                   # "auto" for R2; set the AWS region for S3.
+      - key: S3_ENDPOINT              # Required for R2 (https://<acct>.r2.cloudflarestorage.com); omit for AWS S3.
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PUBLIC_BASE_URL       # Optional: public/CDN base URL. If unset, presigned URLs are returned.
+        sync: false
+      - key: S3_URL_TTL_SECONDS
+        value: "604800"               # 7 days

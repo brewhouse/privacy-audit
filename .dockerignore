@@ -1,0 +1,12 @@
+node_modules
+dist
+output
+runs
+.git
+*.docx
+*.har
+*.png
+*.log
+.env
+.env.local
+npm-debug.log*

@@ -12,14 +12,19 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
+    "serve": "node dist/server.js",
+    "dev:serve": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "playwright install chromium"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1069.0",
+    "@aws-sdk/s3-request-presigner": "^3.1069.0",
     "@duckduckgo/autoconsent": "^10.16.0",
     "commander": "^12.1.0",
     "docx": "^9.7.1",
     "fast-xml-parser": "^4.5.0",
+    "fastify": "^5.8.5",
     "playwright": "^1.48.0"
   },
   "devDependencies": {

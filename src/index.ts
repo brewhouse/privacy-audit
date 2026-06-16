@@ -1,15 +1,10 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
-import { chromium } from "playwright";
-import { buildReport } from "./aggregate.js";
-import { capturePage } from "./capture.js";
-import { enumerateUrls } from "./enumerate.js";
+import { performAudit } from "./audit.js";
 import { renderReportDocx } from "./report-docx.js";
-import type { AuditReport, PageCapture } from "./types.js";
-
-const METHOD = "runtime headless (Playwright + autoconsent)";
+import type { AuditReport } from "./types.js";
 
 interface ScanOptions {
   maxPages: string;
@@ -49,48 +44,22 @@ async function writeDocx(report: AuditReport, outPath: string, client: string | 
 
 async function runScan(domainArg: string, opts: ScanOptions) {
   const log = makeLogger(opts.verbose);
-
-  let domain = domainArg.trim();
-  if (!/^https?:\/\//i.test(domain)) domain = `https://${domain}`;
-
   const maxPages = Math.max(1, parseInt(opts.maxPages, 10) || 25);
-  const outputDir = runDir(opts.out, domain);
-  await mkdir(outputDir, { recursive: true });
+  const outputDir = runDir(opts.out, domainArg);
 
-  console.error(`\n▶ Privacy & Tracking Audit — ${domain}`);
+  console.error(`\n▶ Privacy & Tracking Audit — ${domainArg}`);
   console.error(`  output: ${outputDir}`);
   console.error(`  passes: pre-consent → accept${opts.reject ? " → reject" : ""}\n`);
 
-  const browser = await chromium.launch({ headless: true });
-  const captures: PageCapture[] = [];
-
-  try {
-    console.error("• Enumerating URLs…");
-    const urls = await enumerateUrls(browser, domain, {
-      maxPages,
-      sampleByTemplate: opts.sampleByTemplate,
-      respectRobots: opts.robots,
-      log,
-    });
-    console.error(`  ${urls.length} page(s) to scan.\n`);
-
-    let i = 0;
-    for (const url of urls) {
-      i += 1;
-      console.error(`• [${i}/${urls.length}] ${url}`);
-      const cap = await capturePage(browser, url, i, { outputDir, doReject: opts.reject, log });
-      if (cap.error) console.error(`  ⚠ ${cap.error}`);
-      captures.push(cap);
-    }
-  } finally {
-    await browser.close();
-  }
-
-  console.error("\n• Aggregating & classifying…");
-  const report = buildReport(domain, captures, METHOD);
-
-  const reportPath = path.join(outputDir, "report.json");
-  await writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
+  const { report, reportJsonPath, evidenceDir } = await performAudit(domainArg, {
+    maxPages,
+    sampleByTemplate: opts.sampleByTemplate,
+    doReject: opts.reject,
+    respectRobots: opts.robots,
+    outputDir,
+    log,
+    onProgress: (done, total, url) => console.error(`• [${done}/${total}] ${url}`),
+  });
 
   let docxPath: string | null = null;
   if (opts.docx) {
@@ -100,16 +69,16 @@ async function runScan(domainArg: string, opts: ScanOptions) {
   }
 
   console.error("\n✔ Done.");
-  console.error(`  report:     ${reportPath}`);
+  console.error(`  report:     ${reportJsonPath}`);
   if (docxPath) console.error(`  word:       ${docxPath}`);
-  console.error(`  evidence:   ${path.join(outputDir, "evidence")} (HAR + screenshots)`);
+  console.error(`  evidence:   ${evidenceDir} (HAR + screenshots)`);
   console.error(
     `\n  ${report.summary.thirdPartyServices} third-party services · ` +
       `${report.summary.trackersBeforeConsent} tracker(s) before consent · ` +
       `risk ${report.summary.riskScore}/100\n`,
   );
 
-  console.log(reportPath);
+  console.log(reportJsonPath);
 }
 
 async function runReport(jsonPath: string, opts: { out?: string; client?: string; reportVersion: string }) {
