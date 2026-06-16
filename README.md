@@ -32,9 +32,15 @@ privacy-audit https://www.example.com --sample-by-template --max-pages 40 -v
 
 # Fast pass without the reject (opt-out) test
 privacy-audit https://www.example.com --no-reject
+
+# Scan and render the branded Word report in one go
+privacy-audit https://www.example.com --docx --client "Example Corp"
 ```
 
-### Options
+`scan` is the default command, so `privacy-audit <domain>` and
+`privacy-audit scan <domain>` are equivalent.
+
+### `scan` options
 
 | Flag | Default | Description |
 | --- | --- | --- |
@@ -43,10 +49,30 @@ privacy-audit https://www.example.com --no-reject
 | `--no-reject` | reject on | Skip the opt-out pass |
 | `--no-robots` | respect | Ignore robots.txt (only on sites you control) |
 | `-o, --out <dir>` | `output` | Output base directory |
+| `--docx` | off | Also render the branded Word report (`report.docx`) |
+| `--client <name>` | domain | Client/company name for the Word report |
+| `--report-version <v>` | `1.0` | Report version for the Word report |
 | `-v, --verbose` | off | Verbose progress logging |
 
-The path to `report.json` is printed on **stdout**; progress goes to **stderr**, so you
-can pipe the report straight into the Word report generator.
+The path to `report.json` is printed on **stdout**; progress goes to **stderr**.
+
+## Word report
+
+The `report` command renders Planeteria's branded Word document from a `report.json`,
+matching the section layout of `Website_Privacy_Tracking_Audit_TEMPLATE.docx` (executive
+summary + risk level, scope & methodology, tracking inventory, consent-mechanism review,
+before/accept/reject runtime tables, policy alignment, risk findings, and recommendations
+split into technical vs. for-legal-counsel). It's built fresh with `docx-js` so variable
+table row counts render cleanly. ([`report-docx.ts`](./src/report-docx.ts))
+
+```bash
+# Regenerate the Word report from an existing scan
+privacy-audit report output/www.example.com-2026-06-15T1527/report.json \
+  --client "Example Corp" --report-version 1.0
+
+# Defaults the .docx next to the JSON; override with -o
+privacy-audit report report.json -o ExampleCorp-Audit.docx
+```
 
 ## Output
 
@@ -55,6 +81,7 @@ Each run writes a timestamped directory under `output/`:
 ```
 output/www.example.com-2026-06-15T1527/
   report.json              # the §5 schema — integration contract for the Word report
+  report.docx              # branded Word report (only with --docx)
   evidence/
     page-001.har           # full network log per page
     page-001.png           # full-page screenshot per page
@@ -79,7 +106,8 @@ analysis, the before/accept/reject runtime split, and findings.
    vendor map. ([`vendor-map.ts`](./src/vendor-map.ts))
 4. **Aggregate** — dedupe site-wide trackers, flag page-specific ones, mark before-consent
    firing, compute findings + risk score. ([`aggregate.ts`](./src/aggregate.ts))
-5. **Emit** — `report.json` + raw evidence with ISO-8601 timestamps.
+5. **Emit** — `report.json` + raw evidence with ISO-8601 timestamps, and optionally the
+   branded Word report. ([`report-docx.ts`](./src/report-docx.ts))
 
 ## Important domain rules (from §6)
 

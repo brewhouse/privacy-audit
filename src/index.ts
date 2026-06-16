@@ -1,22 +1,26 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { chromium } from "playwright";
 import { buildReport } from "./aggregate.js";
 import { capturePage } from "./capture.js";
 import { enumerateUrls } from "./enumerate.js";
-import type { PageCapture } from "./types.js";
+import { renderReportDocx } from "./report-docx.js";
+import type { AuditReport, PageCapture } from "./types.js";
 
 const METHOD = "runtime headless (Playwright + autoconsent)";
 
-interface CliOptions {
+interface ScanOptions {
   maxPages: string;
   sampleByTemplate: boolean;
   reject: boolean;
   robots: boolean;
   out: string;
   verbose: boolean;
+  docx: boolean;
+  client?: string;
+  reportVersion: string;
 }
 
 function makeLogger(verbose: boolean) {
@@ -38,26 +42,12 @@ function runDir(base: string, domain: string): string {
   return path.join(base, `${host}-${stamp}`);
 }
 
-async function main() {
-  const program = new Command();
-  program
-    .name("privacy-audit")
-    .description(
-      "Audit a website's third-party tracking and consent behavior across all pages.\n" +
-        "Records what fires before vs. after consent and emits report JSON + raw evidence.",
-    )
-    .argument("<domain>", "Site to audit, e.g. https://www.example.com")
-    .option("-m, --max-pages <n>", "Maximum pages to scan", "25")
-    .option("--sample-by-template", "Scan one representative page per URL template", false)
-    .option("--no-reject", "Skip the reject (opt-out) pass")
-    .option("--no-robots", "Do not respect robots.txt (use only on sites you control)")
-    .option("-o, --out <dir>", "Output base directory", "output")
-    .option("-v, --verbose", "Verbose progress logging", false)
-    .showHelpAfterError();
+async function writeDocx(report: AuditReport, outPath: string, client: string | undefined, version: string) {
+  const buf = await renderReportDocx(report, { clientName: client, reportVersion: version });
+  await writeFile(outPath, buf);
+}
 
-  program.parse();
-  const domainArg = program.args[0];
-  const opts = program.opts<CliOptions>();
+async function runScan(domainArg: string, opts: ScanOptions) {
   const log = makeLogger(opts.verbose);
 
   let domain = domainArg.trim();
@@ -88,11 +78,7 @@ async function main() {
     for (const url of urls) {
       i += 1;
       console.error(`• [${i}/${urls.length}] ${url}`);
-      const cap = await capturePage(browser, url, i, {
-        outputDir,
-        doReject: opts.reject,
-        log,
-      });
+      const cap = await capturePage(browser, url, i, { outputDir, doReject: opts.reject, log });
       if (cap.error) console.error(`  ⚠ ${cap.error}`);
       captures.push(cap);
     }
@@ -106,8 +92,16 @@ async function main() {
   const reportPath = path.join(outputDir, "report.json");
   await writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
 
+  let docxPath: string | null = null;
+  if (opts.docx) {
+    console.error("• Rendering Word report…");
+    docxPath = path.join(outputDir, "report.docx");
+    await writeDocx(report, docxPath, opts.client, opts.reportVersion);
+  }
+
   console.error("\n✔ Done.");
   console.error(`  report:     ${reportPath}`);
+  if (docxPath) console.error(`  word:       ${docxPath}`);
   console.error(`  evidence:   ${path.join(outputDir, "evidence")} (HAR + screenshots)`);
   console.error(
     `\n  ${report.summary.thirdPartyServices} third-party services · ` +
@@ -115,11 +109,53 @@ async function main() {
       `risk ${report.summary.riskScore}/100\n`,
   );
 
-  // Emit the report path on stdout for downstream piping.
   console.log(reportPath);
 }
 
+async function runReport(jsonPath: string, opts: { out?: string; client?: string; reportVersion: string }) {
+  const raw = await readFile(jsonPath, "utf8");
+  const report = JSON.parse(raw) as AuditReport;
+  const outPath = opts.out ?? jsonPath.replace(/\.json$/i, "") + ".docx";
+  await writeDocx(report, outPath, opts.client, opts.reportVersion);
+  console.error(`✔ Word report written: ${outPath}`);
+  console.log(outPath);
+}
+
+function main() {
+  const program = new Command();
+  program
+    .name("privacy-audit")
+    .description("Audit a website's third-party tracking and consent behavior across all pages.");
+
+  program
+    .command("scan", { isDefault: true })
+    .description("Crawl a site, capture before/after-consent behavior, and emit report JSON (+ evidence).")
+    .argument("<domain>", "Site to audit, e.g. https://www.example.com")
+    .option("-m, --max-pages <n>", "Maximum pages to scan", "25")
+    .option("--sample-by-template", "Scan one representative page per URL template", false)
+    .option("--no-reject", "Skip the reject (opt-out) pass")
+    .option("--no-robots", "Do not respect robots.txt (use only on sites you control)")
+    .option("-o, --out <dir>", "Output base directory", "output")
+    .option("--docx", "Also render the branded Word report (report.docx)", false)
+    .option("--client <name>", "Client/company name for the Word report")
+    .option("--report-version <v>", "Report version for the Word report", "1.0")
+    .option("-v, --verbose", "Verbose progress logging", false)
+    .action((domain: string, opts: ScanOptions) => runScan(domain, opts));
+
+  program
+    .command("report")
+    .description("Render the branded Word report from an existing report.json.")
+    .argument("<report.json>", "Path to a report.json produced by a scan")
+    .option("-o, --out <file>", "Output .docx path (defaults next to the JSON)")
+    .option("--client <name>", "Client/company name for the Word report")
+    .option("--report-version <v>", "Report version", "1.0")
+    .action((jsonPath: string, opts: { out?: string; client?: string; reportVersion: string }) => runReport(jsonPath, opts));
+
+  program.showHelpAfterError();
+  return program.parseAsync();
+}
+
 main().catch((err) => {
-  console.error(`\n✖ Audit failed: ${(err as Error).stack ?? err}`);
+  console.error(`\n✖ Failed: ${(err as Error).stack ?? err}`);
   process.exit(1);
 });
