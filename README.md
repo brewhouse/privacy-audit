@@ -109,6 +109,39 @@ analysis, the before/accept/reject runtime split, and findings.
 5. **Emit** — `report.json` + raw evidence with ISO-8601 timestamps, and optionally the
    branded Word report. ([`report-docx.ts`](./src/report-docx.ts))
 
+## Hosted API (Render)
+
+The same pipeline can run as an HTTP service ([`server.ts`](./src/server.ts)). Because a
+crawl takes minutes and spawns Chromium, audits run as **jobs**: you enqueue one and poll
+for the result. Evidence is uploaded to **S3 / Cloudflare R2** and returned as URLs.
+
+```
+POST /audit        # enqueue → 202 { id, status, poll }
+GET  /audit/:id    # poll    → { status, progress, result: { report, urls } }
+GET  /healthz      # liveness
+```
+
+All `/audit` routes require `Authorization: Bearer $AUDIT_API_TOKEN`. A request to audit a
+host not in `ALLOWED_DOMAINS` is rejected (§8: only scan authorized sites).
+
+```bash
+# enqueue
+curl -X POST https://privacy-audit.onrender.com/audit \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"domain":"https://www.client.com","maxPages":25,"client":"Client Inc"}'
+# → { "id": "…", "status": "queued", "poll": "/audit/…" }
+
+# poll
+curl https://privacy-audit.onrender.com/audit/<id> -H "authorization: Bearer $TOKEN"
+```
+
+Run locally: `npm run dev:serve` (set `AUDIT_API_TOKEN`, `ALLOWED_DOMAINS`, and the `S3_*`
+vars — see [`render.yaml`](./render.yaml) for the full list).
+
+**Deploy:** push to GitHub → Render → New → Blueprint → point at this repo (uses
+[`Dockerfile`](./Dockerfile) + [`render.yaml`](./render.yaml)). Set the secret env vars in
+the dashboard. Use a **Standard** plan or larger — Chromium will OOM on 512 MB.
+
 ## Important domain rules (from §6)
 
 - Strictly-necessary items (consent platform, security, CDN, payment) are **excluded**
