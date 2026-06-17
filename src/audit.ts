@@ -17,6 +17,52 @@ export interface AuditRunOptions {
   log: (m: string) => void;
   /** Optional per-page progress callback for the server/job queue. */
   onProgress?: (done: number, total: number, url: string) => void;
+  /** Hard cap per page; on expiry the page is recorded as errored and the crawl continues. */
+  pageTimeoutMs?: number;
+  /** Abort the whole run (e.g. job timeout). Force-closes the browser to unblock pending ops. */
+  signal?: AbortSignal;
+}
+
+const DEFAULT_PAGE_TIMEOUT_MS = 120_000;
+
+/** Reject if `p` doesn't settle within `ms` — guards against any operation hanging forever. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+/** A placeholder capture for a page that errored/timed out, so the report still builds. */
+function erroredCapture(url: string, error: string): PageCapture {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname || "/";
+  } catch {
+    pathname = url;
+  }
+  const empty = { requests: [], cookies: [], scripts: [] };
+  return {
+    url,
+    path: pathname,
+    preConsent: { ...empty },
+    afterAccept: { ...empty },
+    afterReject: { ...empty },
+    consentUi: { bannerPresent: false, acceptAll: false, rejectAll: false, settings: false, cmpIdentified: null },
+    consentMode: { present: false, defaultDenied: false, defaultGranted: false },
+    harPath: null,
+    screenshotPath: null,
+    error,
+  };
 }
 
 export interface AuditRunResult {
@@ -41,7 +87,19 @@ export async function performAudit(domainInput: string, opts: AuditRunOptions): 
   const domain = normalizeDomain(domainInput);
   await mkdir(opts.outputDir, { recursive: true });
 
+  const pageTimeout = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
   const browser = await chromium.launch({ headless: true });
+
+  // On abort (e.g. job-level timeout), force-close the browser so any in-flight
+  // Playwright call rejects and the run unwinds instead of hanging.
+  const onAbort = () => {
+    void browser.close().catch(() => {});
+  };
+  if (opts.signal) {
+    if (opts.signal.aborted) onAbort();
+    else opts.signal.addEventListener("abort", onAbort, { once: true });
+  }
+
   const captures: PageCapture[] = [];
   try {
     const urls = await enumerateUrls(browser, domain, {
@@ -53,18 +111,27 @@ export async function performAudit(domainInput: string, opts: AuditRunOptions): 
 
     let i = 0;
     for (const url of urls) {
+      if (opts.signal?.aborted) throw new Error("Audit aborted");
       i += 1;
       opts.log(`[${i}/${urls.length}] ${url}`);
       opts.onProgress?.(i, urls.length, url);
-      const cap = await capturePage(browser, url, i, {
-        outputDir: opts.outputDir,
-        doReject: opts.doReject,
-        log: opts.log,
-      });
-      captures.push(cap);
+      try {
+        const cap = await withTimeout(
+          capturePage(browser, url, i, { outputDir: opts.outputDir, doReject: opts.doReject, log: opts.log }),
+          pageTimeout,
+          `page ${i} (${url})`,
+        );
+        captures.push(cap);
+      } catch (err) {
+        // One bad/slow page must not wedge the whole crawl — record it and move on.
+        const msg = (err as Error).message;
+        opts.log(`  page failed: ${msg}`);
+        captures.push(erroredCapture(url, msg));
+      }
     }
   } finally {
-    await browser.close();
+    if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
+    await browser.close().catch(() => {});
   }
 
   const report = buildReport(domain, captures, AUDIT_METHOD);

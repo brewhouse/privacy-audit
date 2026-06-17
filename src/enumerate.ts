@@ -40,6 +40,7 @@ async function fetchText(url: string): Promise<string | null> {
     const res = await fetch(url, {
       headers: { "User-Agent": "PlaneteriaPrivacyAudit/0.1 (+authorized audit)" },
       redirect: "follow",
+      signal: AbortSignal.timeout(15000), // never let a stalled sitemap fetch hang the run
     });
     if (!res.ok) return null;
     return await res.text();

@@ -45,6 +45,10 @@ export interface Job {
 }
 
 const CONCURRENCY = Math.max(1, Number(process.env.AUDIT_CONCURRENCY) || 1);
+// Wall-clock cap per job. On expiry the run is aborted and the worker slot freed,
+// so a single hung crawl can never block the queue indefinitely.
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS) || 20 * 60 * 1000;
+const PAGE_TIMEOUT_MS = Number(process.env.PAGE_TIMEOUT_MS) || 120_000;
 
 export class AuditQueue {
   private jobs = new Map<string, Job>();
@@ -111,6 +115,8 @@ export class AuditQueue {
     job.status = "running";
     job.startedAt = new Date().toISOString();
     const workDir = await mkdtemp(path.join(tmpdir(), `audit-${job.id}-`));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), JOB_TIMEOUT_MS);
     try {
       const { report, evidenceDir, reportJsonPath } = await performAudit(job.domain, {
         maxPages: job.options.maxPages,
@@ -119,6 +125,8 @@ export class AuditQueue {
         respectRobots: job.options.respectRobots,
         outputDir: workDir,
         log: () => {},
+        signal: controller.signal,
+        pageTimeoutMs: PAGE_TIMEOUT_MS,
         onProgress: (done, total, url) => {
           job.progress = { done, total, url };
         },
@@ -147,8 +155,15 @@ export class AuditQueue {
       job.status = "done";
     } catch (err) {
       job.status = "error";
-      job.error = (err as Error).message;
+      const dur =
+        JOB_TIMEOUT_MS >= 60_000
+          ? `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`
+          : `${Math.round(JOB_TIMEOUT_MS / 1000)}s`;
+      job.error = controller.signal.aborted
+        ? `Audit timed out after ${dur} and was aborted.`
+        : (err as Error).message;
     } finally {
+      clearTimeout(timer);
       job.finishedAt = new Date().toISOString();
       await rm(workDir, { recursive: true, force: true }).catch(() => {});
     }
