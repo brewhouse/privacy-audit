@@ -23,18 +23,16 @@ services:
       - key: MAX_PAGES_LIMIT
         value: "100"
 
-      # --- Object storage for evidence (S3 or Cloudflare R2) ---
+      # --- Amazon S3 for evidence storage ---
       - key: S3_BUCKET
         sync: false
       - key: S3_REGION
-        value: auto                   # "auto" for R2; set the AWS region for S3.
-      - key: S3_ENDPOINT              # Required for R2 (https://<acct>.r2.cloudflarestorage.com); omit for AWS S3.
-        sync: false
-      - key: S3_ACCESS_KEY_ID
+        value: us-west-2              # the AWS region your bucket lives in.
+      - key: S3_ACCESS_KEY_ID         # IAM user with PutObject/GetObject on the bucket.
         sync: false
       - key: S3_SECRET_ACCESS_KEY
         sync: false
-      - key: S3_PUBLIC_BASE_URL       # Optional: public/CDN base URL. If unset, presigned URLs are returned.
+      - key: S3_PUBLIC_BASE_URL       # Optional: public/CloudFront base URL. If unset, presigned URLs are returned.
         sync: false
       - key: S3_URL_TTL_SECONDS
-        value: "604800"               # 7 days
+        value: "604800"               # 7 days (presigned URL lifetime)

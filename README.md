@@ -113,7 +113,7 @@ analysis, the before/accept/reject runtime split, and findings.
 
 The same pipeline can run as an HTTP service ([`server.ts`](./src/server.ts)). Because a
 crawl takes minutes and spawns Chromium, audits run as **jobs**: you enqueue one and poll
-for the result. Evidence is uploaded to **S3 / Cloudflare R2** and returned as URLs.
+for the result. Evidence is uploaded to **Amazon S3** and returned as URLs.
 
 ```
 POST /audit        # enqueue → 202 { id, status, poll }

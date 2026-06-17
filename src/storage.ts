@@ -4,17 +4,18 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
- * Object-storage upload for hosted audit runs (S3 or Cloudflare R2).
+ * Object-storage upload for hosted audit runs — Amazon S3.
  *
- * Configured entirely via env vars so the same code targets AWS S3 or R2:
+ * Configured via env vars:
  *   S3_BUCKET              (required)  bucket name
- *   S3_REGION              region; use "auto" for R2 (default "auto")
- *   S3_ENDPOINT            custom endpoint; required for R2, omit for AWS S3
- *   S3_ACCESS_KEY_ID       credentials
+ *   S3_REGION              AWS region, e.g. "us-west-2" (default "us-east-1")
+ *   S3_ACCESS_KEY_ID       credentials (IAM user with PutObject/GetObject on the bucket)
  *   S3_SECRET_ACCESS_KEY   credentials
  *   S3_PUBLIC_BASE_URL     optional; if set, returned URLs are `${base}/${key}`
- *                          (public bucket / CDN). Otherwise a presigned GET URL is returned.
+ *                          (public bucket / CloudFront). Otherwise a presigned GET URL is returned.
  *   S3_URL_TTL_SECONDS     presigned URL lifetime (default 604800 = 7 days)
+ *   S3_ENDPOINT            optional; only for S3-compatible providers (MinIO, R2).
+ *                          Leave unset for Amazon S3.
  */
 
 export interface StorageConfig {
@@ -34,7 +35,7 @@ export function loadStorageConfig(): StorageConfig | null {
   if (!bucket || !accessKeyId || !secretAccessKey) return null;
   return {
     bucket,
-    region: process.env.S3_REGION || "auto",
+    region: process.env.S3_REGION || "us-east-1",
     endpoint: process.env.S3_ENDPOINT || undefined,
     accessKeyId,
     secretAccessKey,
