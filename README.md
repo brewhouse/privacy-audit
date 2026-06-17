@@ -89,7 +89,7 @@ output/www.example.com-2026-06-15T1527/
 ```
 
 `report.json` matches the schema in `CLAUDE.md` §5 (fields are stable). It contains the
-scan metadata, summary + risk score, classified inventory, cookies, consent-mechanism
+scan metadata, summary + privacy score (100 = best), classified inventory, cookies, consent-mechanism
 analysis, the before/accept/reject runtime split, and findings.
 
 ## How it works (pipeline)
@@ -154,7 +154,7 @@ the dashboard. Use a **Standard** plan or larger — Chromium will OOM on 512 MB
 ## Important domain rules (from §6)
 
 - Strictly-necessary items (consent platform, security, CDN, payment) are **excluded**
-  from the risk score and the `*BeforeConsent` counts.
+  from the privacy score (100 = best) and the `*BeforeConsent` counts.
 - Severity reflects **technical exposure**, never a legal determination. The tool never
   labels a site "non-compliant."
 - reCAPTCHA is reported with its timing but flagged for human judgment, not auto-high.

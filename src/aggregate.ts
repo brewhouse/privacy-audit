@@ -64,9 +64,30 @@ function pickInjectionSource(capture: PageCapture, vendorName: string): Injectio
   return "unknown";
 }
 
-/** Build the deduped, site-wide inventory of classified third-party services. */
+/** Registrable-domain-ish grouping key for unclassified third parties (best-effort eTLD+1). */
+function regDomain(host: string): string {
+  return host.split(".").slice(-2).join(".");
+}
+
+/**
+ * Build the deduped, site-wide inventory of third-party services.
+ *
+ * Every third-party domain that fires is listed — known vendors are classified via the
+ * vendor map; anything unmatched is still surfaced (grouped by registrable domain) so the
+ * named inventory mirrors the raw network logs. Unmatched infra (CDN/etc.) is marked
+ * `necessary`; everything else `unknown` and flagged for human classification.
+ */
 function buildInventory(captures: PageCapture[]): InventoryItem[] {
   const byKey = new Map<string, InventoryAccumulator>();
+
+  const ensure = (key: string, seed: () => Omit<InventoryAccumulator, "_pages" | "pages">): InventoryAccumulator => {
+    let item = byKey.get(key);
+    if (!item) {
+      item = { ...seed(), pages: [], _pages: new Set<string>() } as InventoryAccumulator;
+      byKey.set(key, item);
+    }
+    return item;
+  };
 
   for (const cap of captures) {
     // A request seen in the pre-consent pass fires before consent.
@@ -74,14 +95,12 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
 
     for (const req of cap.preConsent.requests.concat(cap.afterAccept.requests)) {
       if (!req.isThirdParty) continue;
-      const vendor = lookupVendor(req.url);
-      if (!vendor) continue;
-      const key = `${vendor.vendor}::${vendor.name}`;
       const firesBefore = preHosts.has(req.url);
+      const vendor = lookupVendor(req.url);
 
-      let item = byKey.get(key);
-      if (!item) {
-        item = {
+      let item: InventoryAccumulator;
+      if (vendor) {
+        item = ensure(`${vendor.vendor}::${vendor.name}`, () => ({
           technology: vendor.name,
           vendor: vendor.vendor,
           purpose: vendor.purpose!,
@@ -90,10 +109,21 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
           firesBeforeConsent: false,
           injectionSource: pickInjectionSource(cap, vendor.name),
           inPolicy: "review", // human/legal step decides yes/no
-          pages: [],
-          _pages: new Set<string>(),
-        };
-        byKey.set(key, item);
+        }));
+      } else {
+        // Unclassified third party — surface it rather than dropping it.
+        const dom = regDomain(req.domain);
+        const necessary = isNecessaryHost(req.domain);
+        item = ensure(`unclassified::${dom}`, () => ({
+          technology: dom,
+          vendor: necessary ? "Infrastructure / CDN" : "Unclassified",
+          purpose: necessary ? "Strictly necessary" : "Unclassified third party",
+          dataRecipient: dom,
+          category: necessary ? "necessary" : "unknown",
+          firesBeforeConsent: false,
+          injectionSource: pickInjectionSource(cap, dom),
+          inPolicy: "review",
+        }));
       }
       if (firesBefore) item.firesBeforeConsent = true;
       item._pages.add(cap.path);
@@ -197,8 +227,10 @@ function buildFindingsAndRisk(
   inventory: InventoryItem[],
   cookies: CookieRecord[],
   consent: ConsentMechanism,
-): { findings: Finding[]; risk: number } {
+): { findings: Finding[]; privacyScore: number } {
   const findings: Finding[] = [];
+  // `risk` is an internal penalty (0 = clean, higher = worse). We invert it to a
+  // privacyScore (100 = best) at the end so the report reads as a positive grade.
   let risk = 0;
 
   const pagesWithPath = (pred: (i: InventoryItem) => boolean) =>
@@ -289,14 +321,14 @@ function buildFindingsAndRisk(
     });
   }
 
-  return { findings, risk: Math.min(100, risk) };
+  return { findings, privacyScore: 100 - Math.min(100, risk) };
 }
 
 function buildSummary(
   inventory: InventoryItem[],
   cookies: CookieRecord[],
   captures: PageCapture[],
-  risk: number,
+  privacyScore: number,
 ): Summary {
   const violatingBefore = inventory.filter(
     (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
@@ -323,7 +355,7 @@ function buildSummary(
     cookiesBeforeConsent: cookiesBefore.length,
     domainsBeforeConsent: domainsBefore.size,
     thirdPartyFonts: fonts.size,
-    riskScore: risk,
+    privacyScore,
   };
 }
 
@@ -337,8 +369,8 @@ export function buildReport(
   const cookies = buildCookies(captures);
   const consentMechanism = buildConsentMechanism(captures, inventory);
   const runtime = buildRuntime(captures);
-  const { findings, risk } = buildFindingsAndRisk(captures, inventory, cookies, consentMechanism);
-  const summary = buildSummary(inventory, cookies, captures, risk);
+  const { findings, privacyScore } = buildFindingsAndRisk(captures, inventory, cookies, consentMechanism);
+  const summary = buildSummary(inventory, cookies, captures, privacyScore);
 
   return {
     scan: {

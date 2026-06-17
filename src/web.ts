@@ -208,10 +208,10 @@ export const WEB_FORM_HTML = `<!doctype html>
     var r = j.result.report;
     var u = j.result.urls;
     var s = r.summary;
-    var level = s.riskScore >= 60 ? ["Elevated","sevHIGH"] : s.riskScore >= 30 ? ["Moderate","sevMEDIUM"] : ["Low","sevLOW"];
+    var level = s.privacyScore <= 40 ? ["Elevated","sevHIGH"] : s.privacyScore <= 70 ? ["Moderate","sevMEDIUM"] : ["Low","sevLOW"];
 
     var html = "";
-    html += '<p>Risk: <span class="badge ' + level[1] + '">' + level[0] + " (" + s.riskScore + "/100)</span></p>";
+    html += '<p>Privacy score: <span class="badge ' + level[1] + '">' + s.privacyScore + "/100 — " + level[0] + " risk</span> <span class='muted'>(100 = best)</span></p>";
 
     html += "<table><tr><th>Metric</th><th>Value</th></tr>";
     html += "<tr><td>Pages scanned</td><td>" + r.scan.pagesScanned.length + "</td></tr>";

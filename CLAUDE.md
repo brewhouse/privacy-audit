@@ -49,7 +49,7 @@ This shape maps directly onto the report sections. Keep field names stable.
     "cookiesBeforeConsent": 4,
     "domainsBeforeConsent": 2,
     "thirdPartyFonts": 0,
-    "riskScore": 79                       // 0 best; our own weighting, see §6
+    "privacyScore": 70                    // 0–100, 100 = best (no issues); our own weighting, see §6
   },
   "inventory": [
     {
@@ -97,7 +97,7 @@ This shape maps directly onto the report sections. Keep field names stable.
 
 ## 6. Domain rules & gotchas (do not skip — these aren't inferable from the libraries)
 
-- **Exclude strictly-necessary items from risk.** Cookies/requests from the consent platform itself, security, CDN, and payment do **not** count as pre-consent violations. The risk score and `*BeforeConsent` counts must ignore them.
+- **Exclude strictly-necessary items from risk.** Cookies/requests from the consent platform itself, security, CDN, and payment do **not** count as pre-consent violations. The privacy score (100 = best; penalties deducted for issues) and `*BeforeConsent` counts must ignore them.
 - **Severity is technical exposure, not a legal determination.** Never label a site "non-compliant" or "illegal" in output. Use "fires before consent," "non-blocking banner," etc. Recommendations split into *technical* and *for legal counsel*.
 - **reCAPTCHA** is often argued to be necessary for spam/security, but v3 loads site-wide on every page. Report its timing; categorize as functional, flag for human judgment rather than auto-marking high risk.
 - **Legacy Universal Analytics tags** (cookies like `_gat_gtag_UA_########`) are retired by Google — flag for removal as dead weight that still fires pre-consent.

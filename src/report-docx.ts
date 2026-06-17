@@ -59,9 +59,10 @@ export interface DocxOptions {
 
 // ---------- small helpers ----------
 
+// privacyScore: 100 = best. Lower scores mean more exposure.
 function riskLevel(score: number): { label: string; fill: string } {
-  if (score >= 60) return { label: "Elevated", fill: RED_FILL };
-  if (score >= 30) return { label: "Moderate", fill: YELLOW_FILL };
+  if (score <= 40) return { label: "Elevated", fill: RED_FILL };
+  if (score <= 70) return { label: "Moderate", fill: YELLOW_FILL };
   return { label: "Low", fill: GREEN_FILL };
 }
 
@@ -219,7 +220,7 @@ function noticeBox(): Table {
 
 function executiveSummary(report: AuditReport): (Paragraph | Table)[] {
   const s = report.summary;
-  const risk = riskLevel(s.riskScore);
+  const risk = riskLevel(s.privacyScore);
   const top = [...report.findings]
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
     .slice(0, 3);
@@ -228,7 +229,7 @@ function executiveSummary(report: AuditReport): (Paragraph | Table)[] {
     h1("Executive Summary"),
     h2("Key findings at a glance"),
     kvTable([
-      ["Overall risk level", `${risk.label}  (score ${s.riskScore} / 100, 0 = best)`, risk.fill],
+      ["Privacy score (100 = best)", `${s.privacyScore} / 100 — ${risk.label} risk`, risk.fill],
       ["Third-party services", String(s.thirdPartyServices)],
       ["Trackers firing before consent", String(s.trackersBeforeConsent), s.trackersBeforeConsent > 0 ? RED_FILL : GREEN_FILL],
       ["Cookies set before consent", String(s.cookiesBeforeConsent), s.cookiesBeforeConsent > 0 ? RED_FILL : GREEN_FILL],

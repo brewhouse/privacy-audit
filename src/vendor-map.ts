@@ -65,6 +65,12 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
 
   // --- Functional / sharing / embeds ---
   "static.addtoany.com": { vendor: "AddToAny", name: "AddToAny Share", category: "functional" },
+  "addevent.com": { vendor: "AddEvent", name: "AddEvent (Add to Calendar)", category: "functional" },
+
+  // --- Accessibility widgets (functional; flag for human judgment, not a tracker) ---
+  "userway.org": { vendor: "UserWay", name: "UserWay Accessibility", category: "functional" },
+  "accessibilityserver.org": { vendor: "Accessibility Widget", name: "Accessibility Widget", category: "functional" },
+  "accessibe.com": { vendor: "accessiBe", name: "accessiBe Accessibility", category: "functional" },
   "player.vimeo.com": { vendor: "Vimeo", name: "Vimeo Embed", category: "functional" },
   "vimeo.com": { vendor: "Vimeo", name: "Vimeo", category: "functional" },
   "use.typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
@@ -81,6 +87,7 @@ const PURPOSE_BY_CATEGORY: Record<Category, string> = {
   analytics: "Analytics",
   marketing: "Marketing / Advertising",
   "non-essential": "Non-essential",
+  unknown: "Unclassified third party",
 };
 
 /**

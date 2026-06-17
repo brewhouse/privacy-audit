@@ -3,7 +3,7 @@
  * These field names map directly onto the Word report sections and MUST stay stable.
  */
 
-export type Category = "necessary" | "functional" | "analytics" | "marketing" | "non-essential";
+export type Category = "necessary" | "functional" | "analytics" | "marketing" | "non-essential" | "unknown";
 export type InjectionSource = "theme" | "gtm" | "plugin" | "unknown";
 export type InPolicy = "yes" | "no" | "review";
 export type Party = "first" | "third";
@@ -23,7 +23,7 @@ export interface Summary {
   cookiesBeforeConsent: number;
   domainsBeforeConsent: number;
   thirdPartyFonts: number;
-  riskScore: number; // 0 best; our own weighting, see §6
+  privacyScore: number; // 0–100, 100 = best (no issues); our own weighting, see §6
 }
 
 export interface InventoryItem {

@@ -75,7 +75,7 @@ async function runScan(domainArg: string, opts: ScanOptions) {
   console.error(
     `\n  ${report.summary.thirdPartyServices} third-party services · ` +
       `${report.summary.trackersBeforeConsent} tracker(s) before consent · ` +
-      `risk ${report.summary.riskScore}/100\n`,
+      `privacy score ${report.summary.privacyScore}/100 (100 = best)\n`,
   );
 
   console.log(reportJsonPath);

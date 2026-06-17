@@ -240,10 +240,25 @@ export async function enumerateUrls(
   }
   let result = [...deduped];
 
-  // Always include the homepage.
-  if (!result.includes(startUrl)) result.unshift(startUrl);
+  // 4. Pin the homepage and contact page to the FRONT so they're always audited first
+  //    (and never dropped by sampling or the --max-pages cap).
+  const contactRe = /\/contact(?:-?us|-form)?\/?$/i;
+  const isContact = (u: string) => {
+    try {
+      return contactRe.test(new URL(u).pathname);
+    } catch {
+      return false;
+    }
+  };
+  const pinned: string[] = [startUrl]; // homepage always included, even if absent from the sitemap
+  const contact = result.find((u) => u !== startUrl && isContact(u));
+  if (contact) pinned.push(contact);
 
-  // 4. Sampling + cap.
+  const rest = result.filter((u) => !pinned.includes(u));
+  result = [...pinned, ...rest];
+  opts.log(`priority pages: ${pinned.join(", ")}`);
+
+  // 5. Sampling + cap (pinned pages stay first, so they survive both).
   if (opts.sampleByTemplate) {
     const before = result.length;
     result = sampleByTemplate(result);
