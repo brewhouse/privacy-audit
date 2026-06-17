@@ -38,6 +38,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "youtube-nocookie.com": { vendor: "Google", name: "YouTube (no-cookie)", category: "functional" },
   "fonts.googleapis.com": { vendor: "Google", name: "Google Fonts", category: "functional" },
   "fonts.gstatic.com": { vendor: "Google", name: "Google Fonts", category: "functional" },
+  "ajax.googleapis.com": { vendor: "Google", name: "Google Hosted Libraries (jQuery)", category: "functional" },
+  "apis.google.com": { vendor: "Google", name: "Google API (apis.google.com)", category: "functional" },
 
   // --- Meta ---
   "connect.facebook.net": { vendor: "Meta", name: "Meta Pixel", category: "marketing" },

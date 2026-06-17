@@ -254,16 +254,21 @@ function buildFindingsAndRisk(
     });
   }
 
-  // 2. Non-blocking banner.
-  if (consent.bannerPresent && !consent.blocksBeforeConsent) {
+  // 2. No effective consent gating — applies whether the banner is missing entirely
+  //    (no mechanism) or present but non-blocking. A site with no banner at all is at
+  //    least as exposed as one with a broken banner, so both are penalized.
+  const ungated = inventory.filter((i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category));
+  if (ungated.length && !consent.blocksBeforeConsent) {
     risk += 20;
+    const noBanner = !consent.bannerPresent;
     findings.push({
       severity: "high",
-      title: "Non-blocking consent banner",
-      detail:
-        "A consent banner is present, but non-essential requests/cookies fire on load before any choice is made.",
-      pages: pagesWithPath((i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category)),
-      resources: inventory.filter((i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category)).map((i) => i.technology),
+      title: noBanner ? "No consent mechanism" : "Non-blocking consent banner",
+      detail: noBanner
+        ? "No consent banner or CMP was detected, yet non-essential trackers fire on load — visitors have no way to refuse before data is collected."
+        : "A consent banner is present, but non-essential requests/cookies fire on load before any choice is made.",
+      pages: pagesWithPath((i) => ungated.includes(i)),
+      resources: ungated.map((i) => i.technology),
     });
   }
 
@@ -280,10 +285,11 @@ function buildFindingsAndRisk(
     });
   }
 
-  // 4. Legacy Universal Analytics tags (dead weight, §6).
+  // 4. Legacy Universal Analytics tags (dead weight, §6). No separate score penalty —
+  //    it's already counted as a pre-consent analytics tracker in finding 1; this finding
+  //    is the removal recommendation.
   const legacyCookies = cookies.filter((c) => LEGACY_UA_COOKIE.test(c.name));
   if (legacyCookies.length) {
-    risk += Math.min(10, legacyCookies.length * 5);
     findings.push({
       severity: "medium",
       title: "Legacy Universal Analytics tags",
@@ -359,6 +365,36 @@ function buildSummary(
   };
 }
 
+/**
+ * Surface legacy Universal Analytics as its own inventory line (it fires on load as a
+ * retired analytics tag). Detected from its cookies; counted as a pre-consent tracker so
+ * the score reflects it, and listed for parity with manual scanners.
+ */
+function addLegacyUaService(inventory: InventoryItem[], captures: PageCapture[]): void {
+  const pages = new Set<string>();
+  let firesBefore = false;
+  for (const cap of captures) {
+    if (cap.preConsent.cookies.some((c) => LEGACY_UA_COOKIE.test(c.name))) {
+      pages.add(cap.path);
+      firesBefore = true;
+    } else if (cap.afterAccept.cookies.some((c) => LEGACY_UA_COOKIE.test(c.name))) {
+      pages.add(cap.path);
+    }
+  }
+  if (pages.size === 0 || inventory.some((i) => i.technology === "Universal Analytics (legacy)")) return;
+  inventory.push({
+    technology: "Universal Analytics (legacy)",
+    vendor: "Google",
+    purpose: "Analytics (retired)",
+    dataRecipient: "Google",
+    category: "analytics",
+    firesBeforeConsent: firesBefore,
+    injectionSource: "gtm",
+    inPolicy: "review",
+    pages: [...pages].sort(),
+  });
+}
+
 /** Top-level: assemble the full AuditReport from per-page captures. */
 export function buildReport(
   domain: string,
@@ -366,6 +402,7 @@ export function buildReport(
   method: string,
 ): AuditReport {
   const inventory = buildInventory(captures);
+  addLegacyUaService(inventory, captures);
   const cookies = buildCookies(captures);
   const consentMechanism = buildConsentMechanism(captures, inventory);
   const runtime = buildRuntime(captures);

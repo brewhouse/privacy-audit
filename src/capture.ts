@@ -22,6 +22,28 @@ function hostnameOf(url: string): string {
   }
 }
 
+/**
+ * Close a context, bounding the wait. Closing a context with recordHar flushes the HAR
+ * to disk, which can hang indefinitely if a response never completes (e.g. a map embed
+ * holding a long-lived connection). Bounding it means we keep the page's captured data
+ * (already in memory) instead of letting the whole page time out and be discarded.
+ */
+async function closeContextBounded(ctx: BrowserContext, ms: number, log: (m: string) => void): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      ctx.close(),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`context close timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } catch (err) {
+    log(`  context close: ${(err as Error).message} (HAR may be partial)`);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** A registrable-domain-ish comparison: same site if eTLD+1 matches (best-effort). */
 function sameSite(a: string, b: string): boolean {
   const reg = (h: string) => h.split(".").slice(-2).join(".");
@@ -205,7 +227,7 @@ export async function capturePage(
     capture.consentUi = await detectConsentUi(page);
     capture.consentMode = await detectConsentMode(page);
 
-    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 20000 }).catch(() => {});
     capture.screenshotPath = screenshotPath;
 
     // Accept consent, then re-capture (§4.4).
@@ -222,7 +244,7 @@ export async function capturePage(
     opts.log(`  capture error (accept pass): ${capture.error}`);
   } finally {
     if (ctx) {
-      await ctx.close(); // flushes HAR to disk
+      await closeContextBounded(ctx, 25000, opts.log); // flushes HAR to disk
       capture.harPath = harPath;
     }
   }
@@ -248,7 +270,7 @@ export async function capturePage(
     } catch (err) {
       opts.log(`  capture error (reject pass): ${(err as Error).message}`);
     } finally {
-      if (rctx) await rctx.close();
+      if (rctx) await closeContextBounded(rctx, 25000, opts.log);
     }
   }
 
