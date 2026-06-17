@@ -116,13 +116,19 @@ crawl takes minutes and spawns Chromium, audits run as **jobs**: you enqueue one
 for the result. Evidence is uploaded to **Amazon S3** and returned as URLs.
 
 ```
-POST /audit        # enqueue → 202 { id, status, poll }
-GET  /audit/:id    # poll    → { status, progress, result: { report, urls } }
-GET  /healthz      # liveness
+GET  /              # staff web form (paste token, enter URL, run + view results)
+POST /audit         # enqueue → 202 { id, status, poll }
+GET  /audit/:id     # poll    → { status, progress, result: { report, urls } }
+GET  /healthz       # liveness
 ```
 
-All `/audit` routes require `Authorization: Bearer $AUDIT_API_TOKEN`. A request to audit a
-host not in `ALLOWED_DOMAINS` is rejected (§8: only scan authorized sites).
+All `/audit` routes require `Authorization: Bearer $AUDIT_API_TOKEN`. The web form at `/`
+is served without secrets — staff paste the token (kept in their browser) and it's sent
+with each call, so the API auth still gates every action.
+
+**Domain allowlist:** if `ALLOWED_DOMAINS` is set, a request to audit a host not on it is
+rejected (§8: only scan authorized sites). Leave `ALLOWED_DOMAINS` **empty to allow any
+URL** — the API token is then the only guard, appropriate for a trusted internal tool.
 
 ```bash
 # enqueue

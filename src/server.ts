@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { AuditQueue, type JobOptions } from "./queue.js";
 import { normalizeDomain } from "./audit.js";
+import { WEB_FORM_HTML } from "./web.js";
 
 /**
  * HTTP API for hosted audits (Render).
@@ -58,6 +59,11 @@ export function buildServer() {
     if (token !== API_TOKEN) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
+  });
+
+  // Staff-facing audit form (no secrets in the page; actions still require the token).
+  app.get("/", async (_req, reply) => {
+    return reply.type("text/html").send(WEB_FORM_HTML);
   });
 
   app.get("/healthz", async () => ({
