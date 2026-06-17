@@ -54,6 +54,17 @@ function sameSite(a: string, b: string): boolean {
 
 const FONT_EXT = /\.(woff2?|ttf|otf|eot)(\?|$)/i;
 
+/** Turn a URL pathname into a filesystem-safe, traceable slug ("/" → "home"). */
+function slugifyPath(pathname: string): string {
+  const slug = pathname
+    .toLowerCase()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return slug || "home";
+}
+
 interface HarPair {
   name: string;
   value: string;
@@ -305,7 +316,8 @@ export async function capturePage(
 
   const evidenceDir = path.join(opts.outputDir, "evidence");
   await mkdir(evidenceDir, { recursive: true });
-  const slug = `page-${String(index).padStart(3, "0")}`;
+  // Index prefix keeps files ordered and unique; the path slug makes them traceable.
+  const slug = `${String(index).padStart(3, "0")}-${slugifyPath(pathname)}`;
   const harPath = path.join(evidenceDir, `${slug}.har`);
   const screenshotPath = path.join(evidenceDir, `${slug}.png`);
 
@@ -313,6 +325,7 @@ export async function capturePage(
   const capture: PageCapture = {
     url,
     path: pathname,
+    capturedAt: new Date().toISOString(),
     preConsent: { ...empty },
     afterAccept: { ...empty },
     afterReject: { ...empty },

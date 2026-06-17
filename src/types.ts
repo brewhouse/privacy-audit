@@ -137,6 +137,7 @@ export interface ConsentUiInfo {
 export interface PageCapture {
   url: string;
   path: string; // pathname, used in report `pages` arrays
+  capturedAt: string; // ISO-8601 timestamp of when this page was captured
   preConsent: CapturePass;
   afterAccept: CapturePass;
   afterReject: CapturePass;

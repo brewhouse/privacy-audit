@@ -57,6 +57,7 @@ function erroredCapture(url: string, error: string): PageCapture {
   return {
     url,
     path: pathname,
+    capturedAt: new Date().toISOString(),
     preConsent: { ...empty },
     afterAccept: { ...empty },
     afterReject: { ...empty },
@@ -141,10 +142,30 @@ export async function performAudit(domainInput: string, opts: AuditRunOptions): 
   const reportJsonPath = path.join(opts.outputDir, "report.json");
   await writeFile(reportJsonPath, JSON.stringify(report, null, 2), "utf8");
 
+  // Evidence manifest: maps each HAR/screenshot file to its URL + capture timestamp,
+  // so the raw evidence stays traceable in a legal-context audit.
+  const evidenceDir = path.join(opts.outputDir, "evidence");
+  await mkdir(evidenceDir, { recursive: true });
+  const manifest = {
+    domain,
+    generatedAt: new Date().toISOString(),
+    method: AUDIT_METHOD,
+    pages: captures.map((c, i) => ({
+      index: i + 1,
+      url: c.url,
+      path: c.path,
+      capturedAt: c.capturedAt,
+      har: c.harPath ? path.basename(c.harPath) : null,
+      screenshot: c.screenshotPath ? path.basename(c.screenshotPath) : null,
+      error: c.error ?? null,
+    })),
+  };
+  await writeFile(path.join(evidenceDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+
   return {
     report,
     outputDir: opts.outputDir,
-    evidenceDir: path.join(opts.outputDir, "evidence"),
+    evidenceDir,
     reportJsonPath,
     captures,
   };
