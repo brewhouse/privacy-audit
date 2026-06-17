@@ -116,19 +116,22 @@ crawl takes minutes and spawns Chromium, audits run as **jobs**: you enqueue one
 for the result. Evidence is uploaded to **Amazon S3** and returned as URLs.
 
 ```
-GET  /              # staff web form (paste token, enter URL, run + view results)
+GET  /              # staff UI: login page, or the audit form once signed in
+POST /login         # admin username/password → sets a session cookie
+GET  /logout        # clears the session cookie
 POST /audit         # enqueue → 202 { id, status, poll }
 GET  /audit/:id     # poll    → { status, progress, result: { report, urls } }
 GET  /healthz       # liveness
 ```
 
-All `/audit` routes require `Authorization: Bearer $AUDIT_API_TOKEN`. The web form at `/`
-is served without secrets — staff paste the token (kept in their browser) and it's sent
-with each call, so the API auth still gates every action.
+**Auth:** staff sign in at `/` with `ADMIN_USERNAME` / `ADMIN_PASSWORD`; a signed,
+HttpOnly session cookie (12 h) then authorizes the browser — nothing to paste. Programmatic
+clients may optionally send `Authorization: Bearer $AUDIT_API_TOKEN` (only when that var is
+set). `/audit` accepts either.
 
 **Domain allowlist:** if `ALLOWED_DOMAINS` is set, a request to audit a host not on it is
 rejected (§8: only scan authorized sites). Leave `ALLOWED_DOMAINS` **empty to allow any
-URL** — the API token is then the only guard, appropriate for a trusted internal tool.
+URL** — the login is then the only guard, appropriate for a trusted internal tool.
 
 ```bash
 # enqueue

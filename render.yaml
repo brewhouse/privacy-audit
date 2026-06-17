@@ -11,11 +11,21 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
-      # --- Auth & scope (required) ---
-      - key: AUDIT_API_TOKEN          # Bearer token clients must send. Generate a strong value.
+      # --- Staff login (required for the web form) ---
+      - key: ADMIN_USERNAME           # Username staff sign in with at /.
         sync: false
+      - key: ADMIN_PASSWORD           # Password staff sign in with. Use a strong value.
+        sync: false
+      - key: SESSION_SECRET           # Optional: HMAC key for session cookies. If unset,
+        sync: false                   # it derives from ADMIN_PASSWORD (changing the password logs everyone out).
+
+      # --- Optional: programmatic/API access (bearer token, for CLI/scripts) ---
+      - key: AUDIT_API_TOKEN          # Optional. If set, clients may send Authorization: Bearer <token>.
+        sync: false
+
+      # --- Scope guard ---
       - key: ALLOWED_DOMAINS          # Comma-separated host suffixes you're authorized to scan,
-        sync: false                   # e.g. "planeteria.com,client-one.com". Empty = open (not recommended).
+        sync: false                   # e.g. "planeteria.com,client-one.com". Empty = allow any URL.
 
       # --- Concurrency & limits ---
       - key: AUDIT_CONCURRENCY

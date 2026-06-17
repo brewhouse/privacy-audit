@@ -1,32 +1,29 @@
 /**
- * Static HTML for the staff-facing audit form served at `/`.
+ * Static HTML for the staff-facing pages served by the server.
  *
- * The page itself contains no secrets. Staff paste the API token once (stored in their
- * browser's localStorage); all calls to /audit carry it as a Bearer token, so the API's
- * existing auth still gates every action. A random visitor sees the form but can do
- * nothing without the token.
+ *  - LOGIN_PAGE_HTML: shown at `/` when the visitor has no valid session. Posts the
+ *    admin username/password to /login, which sets an HttpOnly session cookie.
+ *  - WEB_FORM_HTML: the audit form, shown at `/` once authenticated. It calls /audit
+ *    with the session cookie (sent automatically, same-origin) — no token to paste.
  *
- * NOTE: the embedded <script> intentionally avoids backticks and ${...} so it survives
- * being embedded inside this TypeScript template literal.
+ * NOTE: the embedded <script> blocks avoid backticks and ${...} so they survive being
+ * embedded inside these TypeScript template literals.
  */
-export const WEB_FORM_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Privacy & Tracking Audit</title>
-<style>
+
+const STYLE = `
   :root { --navy:#1F3A5F; --blue:#2E6DA4; --gold:#E0B000; --gold-fill:#FFF8E1;
           --green:#E2EFDA; --red:#FCE4E4; --yellow:#FFF2CC; --grey:#BFBFBF; }
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; color:#222; margin:0;
          background:#f6f7f9; line-height:1.5; }
   .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+  .login { max-width: 380px; margin: 8vh auto 0; }
   h1 { color: var(--navy); margin: 0 0 4px; font-size: 26px; }
   .sub { color: var(--blue); margin: 0 0 24px; }
+  .topbar { display:flex; justify-content:space-between; align-items:baseline; }
+  .topbar a { color: var(--blue); font-size:13px; text-decoration:none; }
   .card { background:#fff; border:1px solid #e3e6ea; border-radius:10px; padding:20px;
           margin-bottom:20px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-  .card.notice { background: var(--gold-fill); border-color: var(--gold); }
   label { display:block; font-weight:bold; color:var(--navy); margin:14px 0 4px; font-size:14px; }
   input[type=text], input[type=number], input[type=password] {
     width:100%; padding:9px 11px; border:1px solid var(--grey); border-radius:6px; font-size:15px; }
@@ -49,18 +46,69 @@ export const WEB_FORM_HTML = `<!doctype html>
   .links a { display:inline-block; margin:4px 12px 4px 0; color:var(--blue); }
   .sevHIGH { background:var(--red); } .sevMEDIUM { background:var(--yellow); } .sevLOW { background:#EEF3F8; }
   .muted { color:#777; font-size:13px; }
-</style>
+`;
+
+export const LOGIN_PAGE_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — Privacy Audit</title>
+<style>${STYLE}</style>
+</head>
+<body>
+<div class="wrap login">
+  <h1>Privacy &amp; Tracking Audit</h1>
+  <p class="sub">Planeteria Media — staff sign in</p>
+  <div class="card">
+    <label for="username">Username</label>
+    <input type="text" id="username" autocomplete="username" />
+    <label for="password">Password</label>
+    <input type="password" id="password" autocomplete="current-password" />
+    <button id="signin">Sign in</button>
+    <div id="error"></div>
+  </div>
+</div>
+<script>
+  var $ = function(id){ return document.getElementById(id); };
+  function signin(){
+    $("error").innerHTML = "";
+    var body = { username: $("username").value, password: $("password").value };
+    $("signin").disabled = true;
+    fetch("/login", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json().then(function(j){ return { code:r.status, j:j }; }); })
+      .then(function(res){
+        if (res.code === 200){ location.href = "/"; return; }
+        $("signin").disabled = false;
+        $("error").innerHTML = '<div class="err">' + (res.j.error || "Sign in failed.") + '</div>';
+      })
+      .catch(function(e){ $("signin").disabled = false; $("error").innerHTML = '<div class="err">' + e.message + '</div>'; });
+  }
+  $("signin").addEventListener("click", signin);
+  $("password").addEventListener("keydown", function(e){ if (e.key === "Enter") signin(); });
+</script>
+</body>
+</html>`;
+
+export const WEB_FORM_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy & Tracking Audit</title>
+<style>${STYLE}</style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Website Privacy &amp; Tracking Audit</h1>
-  <p class="sub">Planeteria Media — internal tool</p>
+  <div class="topbar">
+    <div>
+      <h1>Website Privacy &amp; Tracking Audit</h1>
+      <p class="sub">Planeteria Media — internal tool</p>
+    </div>
+    <a href="/logout">Log out</a>
+  </div>
 
   <div class="card">
-    <label for="token">API token</label>
-    <input type="password" id="token" placeholder="Paste your AUDIT_API_TOKEN" autocomplete="off" />
-    <div class="hint">Stored only in this browser. Required to run audits.</div>
-
     <label for="domain">Website URL</label>
     <input type="text" id="domain" placeholder="https://www.example.com" />
 
@@ -97,27 +145,16 @@ export const WEB_FORM_HTML = `<!doctype html>
 
 <script>
   var $ = function(id){ return document.getElementById(id); };
-  var TOKEN_KEY = "pa_token";
-  $("token").value = localStorage.getItem(TOKEN_KEY) || "";
   var pollTimer = null;
 
   function showError(msg){ $("error").innerHTML = '<div class="err">' + msg + '</div>'; }
   function clearError(){ $("error").innerHTML = ""; }
-
-  function authHeaders(token){ return { "authorization": "Bearer " + token, "content-type": "application/json" }; }
-
-  function setRunning(on){
-    $("run").disabled = on;
-    $("run").textContent = on ? "Running…" : "Run audit";
-  }
+  function setRunning(on){ $("run").disabled = on; $("run").textContent = on ? "Running…" : "Run audit"; }
 
   function start(){
     clearError();
-    var token = $("token").value.trim();
     var domain = $("domain").value.trim();
-    if (!token){ showError("Enter the API token."); return; }
     if (!domain){ showError("Enter a website URL."); return; }
-    localStorage.setItem(TOKEN_KEY, token);
 
     var body = {
       domain: domain,
@@ -133,23 +170,24 @@ export const WEB_FORM_HTML = `<!doctype html>
     $("statusLine").textContent = "Submitting…";
     $("progBar").style.width = "0%";
 
-    fetch("/audit", { method:"POST", headers: authHeaders(token), body: JSON.stringify(body) })
+    fetch("/audit", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) })
       .then(function(r){ return r.json().then(function(j){ return { code:r.status, j:j }; }); })
       .then(function(res){
-        if (res.code === 401){ throw new Error("Unauthorized — check the API token."); }
+        if (res.code === 401){ location.href = "/"; return; }
         if (res.code === 403){ throw new Error(res.j.error || "Domain not allowed."); }
         if (res.code >= 400){ throw new Error(res.j.error || ("HTTP " + res.code)); }
-        poll(res.j.id, token);
+        poll(res.j.id);
       })
       .catch(function(e){ setRunning(false); $("statusCard").style.display="none"; showError(e.message); });
   }
 
-  function poll(id, token){
+  function poll(id){
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(function(){
-      fetch("/audit/" + id, { headers: authHeaders(token) })
-        .then(function(r){ return r.json(); })
+      fetch("/audit/" + id)
+        .then(function(r){ if (r.status === 401){ location.href = "/"; return null; } return r.json(); })
         .then(function(j){
+          if (!j) return;
           if (j.progress){
             var pct = j.progress.total ? Math.round(100 * j.progress.done / j.progress.total) : 0;
             $("progBar").style.width = pct + "%";
