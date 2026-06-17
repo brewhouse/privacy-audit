@@ -13,6 +13,9 @@ import type {
 
 const NAV_TIMEOUT = 30000;
 const SETTLE_MS = 3500; // let deferred/GTM-injected requests fire
+// HAR flush on context close can be slow on heavy pages (maps, embeds). Give it room
+// before bailing, so the raw HAR evidence is complete whenever possible.
+const HAR_CLOSE_TIMEOUT_MS = 60000;
 
 function hostnameOf(url: string): string {
   try {
@@ -244,7 +247,7 @@ export async function capturePage(
     opts.log(`  capture error (accept pass): ${capture.error}`);
   } finally {
     if (ctx) {
-      await closeContextBounded(ctx, 25000, opts.log); // flushes HAR to disk
+      await closeContextBounded(ctx, HAR_CLOSE_TIMEOUT_MS, opts.log); // flushes HAR to disk
       capture.harPath = harPath;
     }
   }
@@ -270,7 +273,7 @@ export async function capturePage(
     } catch (err) {
       opts.log(`  capture error (reject pass): ${(err as Error).message}`);
     } finally {
-      if (rctx) await closeContextBounded(rctx, 25000, opts.log);
+      if (rctx) await closeContextBounded(rctx, HAR_CLOSE_TIMEOUT_MS, opts.log);
     }
   }
 

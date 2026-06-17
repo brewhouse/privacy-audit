@@ -167,11 +167,17 @@ function buildCookies(captures: PageCapture[]): CookieRecord[] {
 
 /** Site-wide consent mechanism summary, merged across pages (§4.3). */
 function buildConsentMechanism(captures: PageCapture[], inventory: InventoryItem[]): ConsentMechanism {
-  const anyBanner = captures.some((c) => c.consentUi.bannerPresent);
   const accept = captures.some((c) => c.consentUi.acceptAll);
   const reject = captures.some((c) => c.consentUi.rejectAll);
   const settings = captures.some((c) => c.consentUi.settings);
   const cmp = captures.map((c) => c.consentUi.cmpIdentified).find((x) => x) ?? null;
+
+  // Cross-check to suppress false positives: the heuristic can flag a "cookie"/"consent"
+  // container that isn't a real consent UI (e.g. a generic notice, or Consent Mode code).
+  // Only treat a banner as present if it also exposes a consent control or a known CMP —
+  // otherwise it's almost certainly not a functioning consent mechanism.
+  const rawBanner = captures.some((c) => c.consentUi.bannerPresent);
+  const anyBanner = rawBanner && (accept || reject || settings || cmp !== null);
 
   // Non-blocking: a banner exists but tracking still fired before consent.
   const trackersBeforeConsent = inventory.some(
@@ -269,6 +275,43 @@ function buildFindingsAndRisk(
         : "A consent banner is present, but non-essential requests/cookies fire on load before any choice is made.",
       pages: pagesWithPath((i) => ungated.includes(i)),
       resources: ungated.map((i) => i.technology),
+    });
+  }
+
+  // 2b. Decline-path evidence (our differentiator over load-time-only scanners): did
+  //     non-essential trackers still fire after an opt-out attempt? Only meaningful when
+  //     the reject pass ran (afterReject populated).
+  const TRACKING_COOKIE = /^_ga|^_gid|^_gat|^_fbp|^_gcl|^_uet|^IDE$|^MUID$/i;
+  const declineResources = new Set<string>();
+  const declinePages = new Set<string>();
+  for (const cap of captures) {
+    let hit = false;
+    for (const r of cap.afterReject.requests) {
+      if (!r.isThirdParty) continue;
+      const v = lookupVendor(r.url);
+      if (v && VIOLATION_CATEGORIES.has(v.category)) {
+        declineResources.add(v.name);
+        hit = true;
+      }
+    }
+    for (const c of cap.afterReject.cookies) {
+      if (TRACKING_COOKIE.test(c.name)) {
+        declineResources.add(c.name);
+        hit = true;
+      }
+    }
+    if (hit) declinePages.add(cap.path);
+  }
+  if (declineResources.size) {
+    if (consent.bannerPresent) risk += 20; // a banner that doesn't actually gate on reject
+    findings.push({
+      severity: "high",
+      title: consent.bannerPresent ? "Consent banner does not block on decline" : "Trackers persist after opt-out attempt",
+      detail: consent.bannerPresent
+        ? "After choosing reject / opt-out, non-essential trackers still fired — the banner does not actually gate them. This is the decisive consent test."
+        : "An opt-out was attempted and the page re-loaded; non-essential trackers still fired, consistent with no consent mechanism being present. (Decline-path test — stronger evidence than load-time observation alone.)",
+      pages: [...declinePages].sort(),
+      resources: [...declineResources],
     });
   }
 

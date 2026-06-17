@@ -48,7 +48,7 @@ const CONCURRENCY = Math.max(1, Number(process.env.AUDIT_CONCURRENCY) || 1);
 // Wall-clock cap per job. On expiry the run is aborted and the worker slot freed,
 // so a single hung crawl can never block the queue indefinitely.
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS) || 20 * 60 * 1000;
-const PAGE_TIMEOUT_MS = Number(process.env.PAGE_TIMEOUT_MS) || 120_000;
+const PAGE_TIMEOUT_MS = Number(process.env.PAGE_TIMEOUT_MS) || 300_000;
 
 export class AuditQueue {
   private jobs = new Map<string, Job>();

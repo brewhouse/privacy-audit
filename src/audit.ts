@@ -23,7 +23,10 @@ export interface AuditRunOptions {
   signal?: AbortSignal;
 }
 
-const DEFAULT_PAGE_TIMEOUT_MS = 120_000;
+// Backstop only — every capture sub-step (nav, screenshot, autoconsent, HAR close) is
+// individually bounded, so this just guards against an unforeseen hang. Must exceed the
+// sum of those bounds across both the accept and reject passes (~2× HAR close).
+const DEFAULT_PAGE_TIMEOUT_MS = 300_000;
 
 /** Reject if `p` doesn't settle within `ms` — guards against any operation hanging forever. */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {

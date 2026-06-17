@@ -332,6 +332,10 @@ function consentSection(report: AuditReport): (Paragraph | Table)[] {
       "Note: Consent Mode v2 being present does not mean tags are gated — the default state matters. A “present” status here indicates signals were detected without a “denied” default.",
       { italics: true, color: "666666", size: 18 },
     ),
+    para(
+      "Banner / CMP detection is automated (heuristic DOM scan cross-checked against autoconsent). A detected container is only reported as a banner if it exposes a consent control or a recognized CMP, to avoid false positives from generic notices or Consent Mode code. Automated detection can still err in both directions — manual verification in a browser is recommended before relying on this section for a legal demand.",
+      { italics: true, color: "666666", size: 18 },
+    ),
   ];
 }
 
