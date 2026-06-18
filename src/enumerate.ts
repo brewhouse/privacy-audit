@@ -124,25 +124,53 @@ async function parseSitemap(url: string, seen: Set<string>, log: (m: string) => 
   return out;
 }
 
-/** Collapse URLs to one representative per template (path shape with numeric/slug segments masked). */
+/** URL path shape with numeric / long-slug segments masked, e.g. /news/long-title → /news/:var. */
+function templateOf(u: string): string {
+  try {
+    const path = new URL(u).pathname;
+    return path
+      .split("/")
+      .map((seg) => (/^\d+$/.test(seg) || seg.length > 24 ? ":var" : seg))
+      .join("/");
+  } catch {
+    return u;
+  }
+}
+
+/** Collapse URLs to one representative per template. */
 function sampleByTemplate(urls: string[]): string[] {
-  const templateOf = (u: string): string => {
-    try {
-      const path = new URL(u).pathname;
-      return path
-        .split("/")
-        .map((seg) => (/^\d+$/.test(seg) || seg.length > 24 ? ":var" : seg))
-        .join("/");
-    } catch {
-      return u;
-    }
-  };
   const byTemplate = new Map<string, string>();
   for (const u of urls) {
     const t = templateOf(u);
     if (!byTemplate.has(t)) byTemplate.set(t, u);
   }
   return [...byTemplate.values()];
+}
+
+/**
+ * Reorder URLs so the first N cover as many distinct page templates as possible.
+ *
+ * Sitemaps are usually dominated by one template (news/blog posts), which would otherwise
+ * fill the entire --max-pages budget and crowd out structural pages like /about or
+ * /events that carry their own (page-specific) trackers. Round-robin across template
+ * groups so the cap samples breadth first, then depth.
+ */
+function orderByTemplateDiversity(urls: string[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const u of urls) {
+    const t = templateOf(u);
+    const g = groups.get(t);
+    if (g) g.push(u);
+    else groups.set(t, [u]);
+  }
+  const lists = [...groups.values()];
+  const out: string[] = [];
+  for (let i = 0; out.length < urls.length; i++) {
+    for (const list of lists) {
+      if (i < list.length) out.push(list[i]);
+    }
+  }
+  return out;
 }
 
 /** Same-origin BFS link discovery using a real browser (fallback when no sitemap). */
@@ -187,6 +215,34 @@ async function discoverByCrawl(
   }
   await ctx.close();
   return found;
+}
+
+/**
+ * Same-origin links from the homepage, in DOM order. These are the site's nav/structural
+ * pages (about, events, forum…), which a sitemap buries among hundreds of posts. Used to
+ * prioritize high-value pages so a --max-pages cap doesn't fill up with news articles.
+ */
+async function homepageLinks(browser: Browser, homeUrl: string, origin: string): Promise<string[]> {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await page.goto(homeUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+    const hrefs: string[] = await page.$$eval("a[href]", (els) => els.map((a) => (a as HTMLAnchorElement).href));
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const h of hrefs) {
+      const n = normalizeUrl(h);
+      if (n && n.startsWith(origin) && !seen.has(n)) {
+        seen.add(n);
+        out.push(n);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    await ctx.close();
+  }
 }
 
 export async function enumerateUrls(
@@ -254,8 +310,15 @@ export async function enumerateUrls(
   const contact = result.find((u) => u !== startUrl && isContact(u));
   if (contact) pinned.push(contact);
 
-  const rest = result.filter((u) => !pinned.includes(u));
-  result = [...pinned, ...rest];
+  // Prioritize homepage-linked (nav/structural) pages next — these carry page-specific
+  // trackers (maps, video, event platforms) that a sitemap buries among news posts.
+  // Then fill remaining slots with template breadth so the cap samples distinct page types.
+  const inSet = (u: string) => deduped.has(u) && !pinned.includes(u);
+  const linked = (await homepageLinks(browser, startUrl, origin)).filter(inSet);
+  const linkedSet = new Set(linked);
+  const rest = orderByTemplateDiversity(result.filter((u) => !pinned.includes(u) && !linkedSet.has(u)));
+  result = [...pinned, ...linked, ...rest];
+  if (linked.length) opts.log(`homepage-linked pages prioritized: ${linked.length}`);
   opts.log(`priority pages: ${pinned.join(", ")}`);
 
   // 5. Sampling + cap (pinned pages stay first, so they survive both).
