@@ -52,6 +52,7 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   // --- Microsoft ---
   "clarity.ms": { vendor: "Microsoft", name: "Microsoft Clarity", category: "analytics" },
   "bat.bing.com": { vendor: "Microsoft", name: "Microsoft Bing Ads (UET)", category: "marketing" },
+  "bing.com": { vendor: "Microsoft", name: "Microsoft Bing Ads", category: "marketing" },
 
   // --- Other analytics / marketing ---
   "hotjar.com": { vendor: "Hotjar", name: "Hotjar", category: "analytics" },
@@ -62,6 +63,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   // hsforms.com / .net substring also matches js.hsforms.net, forms.hsforms.com, forms-na2.hsforms.com
   "hsforms.com": { vendor: "HubSpot", name: "HubSpot Forms", category: "marketing" },
   "hsforms.net": { vendor: "HubSpot", name: "HubSpot Forms", category: "marketing" },
+  "hscollectedforms.net": { vendor: "HubSpot", name: "HubSpot Forms", category: "marketing" },
+  "hs-banner.com": { vendor: "HubSpot", name: "HubSpot Banner", category: "marketing" },
   "tiktok.com": { vendor: "TikTok", name: "TikTok Pixel", category: "marketing" },
   "snapchat.com": { vendor: "Snap", name: "Snap Pixel", category: "marketing" },
   "twitter.com/i/adsct": { vendor: "X (Twitter)", name: "X Ads Pixel", category: "marketing" },
@@ -80,6 +83,11 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "vimeo.com": { vendor: "Vimeo", name: "Vimeo", category: "functional" },
   "use.typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
   "cdnjs.cloudflare.com": { vendor: "Cloudflare", name: "cdnjs", category: "functional" },
+  "ytimg.com": { vendor: "Google", name: "YouTube (static images)", category: "functional" },
+
+  // --- Performance / monitoring (functional) ---
+  "newrelic.com": { vendor: "New Relic", name: "New Relic", category: "functional" },
+  "nr-data.net": { vendor: "New Relic", name: "New Relic", category: "functional" },
 
   // --- Dev / QA tools that should not be on production (CLAUDE.md §6) ---
   "bugherd.com": { vendor: "BugHerd", name: "BugHerd (QA)", category: "non-essential" },
