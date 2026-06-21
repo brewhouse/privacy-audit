@@ -59,6 +59,9 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "hs-scripts.com": { vendor: "HubSpot", name: "HubSpot", category: "marketing" },
   "hs-analytics.net": { vendor: "HubSpot", name: "HubSpot Analytics", category: "analytics" },
   "hubspot.com": { vendor: "HubSpot", name: "HubSpot", category: "marketing" },
+  // hsforms.com / .net substring also matches js.hsforms.net, forms.hsforms.com, forms-na2.hsforms.com
+  "hsforms.com": { vendor: "HubSpot", name: "HubSpot Forms", category: "marketing" },
+  "hsforms.net": { vendor: "HubSpot", name: "HubSpot Forms", category: "marketing" },
   "tiktok.com": { vendor: "TikTok", name: "TikTok Pixel", category: "marketing" },
   "snapchat.com": { vendor: "Snap", name: "Snap Pixel", category: "marketing" },
   "twitter.com/i/adsct": { vendor: "X (Twitter)", name: "X Ads Pixel", category: "marketing" },
