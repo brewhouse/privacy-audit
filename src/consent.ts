@@ -175,6 +175,18 @@ export const CMP_SIGNATURES: CmpSignature[] = [
     selectors: ["#wpconsent-root", "#wpconsent-container", 'script[src*="wpconsent"]'],
   },
   {
+    name: "Pressidium Cookie Consent",
+    globals: ["pressidiumCookieConsent", "onPressidiumCookieConsentUpdated"],
+    selectors: ['script[src*="pressidium-cookie-consent"]', '[id*="cookie-consent-client"]'],
+  },
+  {
+    // Open-source CookieConsent by Orest Bida (also the engine Pressidium wraps); checked
+    // after Pressidium so the specific plugin wins. Used standalone on many sites.
+    name: "CookieConsent (Orest Bida)",
+    globals: ["initCookieConsent", "CookieConsent"],
+    selectors: ['script[src*="cookieconsent"]', "#cc-main", "#cc--main", ".cc-window"],
+  },
+  {
     name: "OneTrust",
     globals: ["OneTrust"],
     selectors: ["#onetrust-banner-sdk", 'script[src*="onetrust"]', 'script[src*="cookielaw.org"]'],
@@ -204,7 +216,8 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
   try {
     return await page.evaluate((signatures: CmpSignature[]) => {
       const ACCEPT = /\b(accept|allow|agree|got it|i understand|enable|yes)\b/i;
-      const REJECT = /\b(reject|decline|deny|refuse|disagree|necessary only|essential only|no thanks|opt[- ]?out)\b/i;
+      // "necessary"/"essential" catches reject-equivalents like "Accept necessary" / "Only essential".
+      const REJECT = /\b(reject|decline|deny|refuse|disagree|necessary|essential|no thanks|opt[- ]?out)\b/i;
       const SETTINGS = /\b(settings|preferences|manage|customi[sz]e|options|choices|configure)\b/i;
       const CONTAINER_HINT = /(cookie|consent|gdpr|\bcmp\b|onetrust|cookiebot|complianz|borlabs|wpconsent|cookieyes|termly|osano|usercentrics)/i;
 

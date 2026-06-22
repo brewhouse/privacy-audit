@@ -39,6 +39,20 @@ const NO_BANNER_FIXTURE = `<!doctype html><html><body>
 <footer><a href="/privacy">Privacy Settings</a> · <a href="/contact">Contact</a></footer>
 </body></html>`;
 
+// Pressidium Cookie Consent — global present, banner rendered with "Accept necessary".
+const PRESSIDIUM_FIXTURE = `<!doctype html><html><head>
+<script src="https://example.test/wp-content/plugins/pressidium-cookie-consent/public/bundle.client.js"></script>
+<script>window.pressidiumCookieConsent = {}; window.initCookieConsent = function(){};</script>
+</head><body>
+<div id="cc--main" class="cookie-consent" role="dialog" aria-label="Cookie Consent"
+     style="position:fixed;bottom:0;right:0;width:380px;padding:24px;background:#fff;">
+  <h2>Cookie Consent</h2>
+  <p>We use cookies to ensure the website's proper operation.</p>
+  <a href="/cookie-settings">Cookie Settings</a> | <a href="/cookie-policy">Cookie Policy</a>
+  <button>Accept all</button>
+  <button>Accept necessary</button>
+</div></body></html>`;
+
 // A OneTrust banner — guards against regressing existing CMP detection.
 const ONETRUST_FIXTURE = `<!doctype html><html><head>
 <script>window.OneTrust = {};</script></head><body>
@@ -98,6 +112,15 @@ describe("WPConsent CMP detection", () => {
     const ui = await uiFor(NO_BANNER_FIXTURE);
     assert.equal(ui.bannerPresent, false, "no banner reported");
     assert.equal(ui.cmpIdentified, null, "no CMP identified");
+  });
+
+  test("detects Pressidium Cookie Consent, incl. 'Accept necessary' as reject", async () => {
+    const ui = await uiFor(PRESSIDIUM_FIXTURE);
+    assert.equal(ui.cmpIdentified, "Pressidium Cookie Consent", "CMP identified as Pressidium");
+    assert.equal(ui.bannerPresent, true, "banner present");
+    assert.equal(ui.acceptAll, true, "accept-all recognized");
+    assert.equal(ui.rejectAll, true, '"Accept necessary" recognized as reject');
+    assert.equal(ui.settings, true, '"Cookie Settings" recognized');
   });
 
   test("still detects an existing CMP (OneTrust)", async () => {

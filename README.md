@@ -170,8 +170,9 @@ container element, or the plugin script path) defined as data in `CMP_SIGNATURES
 ([`consent.ts`](./src/consent.ts)) — add a provider by adding one entry. Banner presence is
 reported whenever a CMP is recognized **or** a real consent container is found; consent
 controls are only read from inside that container, so a stray footer "Settings" link can't
-masquerade as a banner. Supported: WPConsent, OneTrust, Cookiebot, Complianz, Borlabs,
-CookieYes, Osano, Usercentrics, Termly, and any IAB TCF v2 CMP (via `__tcfapi`).
+masquerade as a banner. Supported: WPConsent, Pressidium Cookie Consent, CookieConsent (Orest Bida), OneTrust,
+Cookiebot, Complianz, Borlabs, CookieYes, Osano, Usercentrics, Termly, and any IAB TCF v2
+CMP (via `__tcfapi`).
 
 ## Important domain rules (from §6)
 
