@@ -35,6 +35,30 @@ function normalizeUrl(raw: string): string | null {
   }
 }
 
+/**
+ * Normalize a candidate URL and, if it's the same site as `originUrl`, coerce it to the
+ * audited scheme + host. Same-site is matched by hostname ignoring a leading "www." and
+ * ignoring http/https — so sitemaps that (wrongly) list http:// or non-www URLs, common on
+ * Drupal, still resolve to the audited https origin instead of being dropped. Returns null
+ * if the host differs.
+ */
+function sameOriginUrl(candidate: string, originUrl: URL): string | null {
+  const n = normalizeUrl(candidate);
+  if (!n) return null;
+  let c: URL;
+  try {
+    c = new URL(n);
+  } catch {
+    return null;
+  }
+  const strip = (h: string) => h.replace(/^www\./, "");
+  if (strip(c.hostname) !== strip(originUrl.hostname)) return null;
+  c.protocol = originUrl.protocol;
+  c.hostname = originUrl.hostname;
+  c.port = originUrl.port;
+  return c.toString();
+}
+
 async function fetchText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
@@ -177,7 +201,7 @@ function orderByTemplateDiversity(urls: string[]): string[] {
 async function discoverByCrawl(
   browser: Browser,
   startUrl: string,
-  origin: string,
+  originUrl: URL,
   disallow: string[],
   respectRobots: boolean,
   limit: number,
@@ -191,7 +215,7 @@ async function discoverByCrawl(
 
   while (queue.length && found.length < limit) {
     const current = queue.shift()!;
-    const norm = normalizeUrl(current);
+    const norm = sameOriginUrl(current, originUrl);
     if (!norm || visited.has(norm)) continue;
     visited.add(norm);
     if (respectRobots && isDisallowed(norm, disallow)) continue;
@@ -204,8 +228,8 @@ async function discoverByCrawl(
         els.map((a) => (a as HTMLAnchorElement).href),
       );
       for (const href of hrefs) {
-        const n = normalizeUrl(href);
-        if (n && n.startsWith(origin) && !visited.has(n)) queue.push(n);
+        const n = sameOriginUrl(href, originUrl);
+        if (n && !visited.has(n)) queue.push(n);
       }
     } catch (err) {
       log(`  crawl error at ${norm}: ${(err as Error).message}`);
@@ -222,7 +246,7 @@ async function discoverByCrawl(
  * pages (about, events, forum…), which a sitemap buries among hundreds of posts. Used to
  * prioritize high-value pages so a --max-pages cap doesn't fill up with news articles.
  */
-async function homepageLinks(browser: Browser, homeUrl: string, origin: string): Promise<string[]> {
+async function homepageLinks(browser: Browser, homeUrl: string, originUrl: URL): Promise<string[]> {
   const ctx = await browser.newContext();
   try {
     const page = await ctx.newPage();
@@ -231,8 +255,8 @@ async function homepageLinks(browser: Browser, homeUrl: string, origin: string):
     const out: string[] = [];
     const seen = new Set<string>();
     for (const h of hrefs) {
-      const n = normalizeUrl(h);
-      if (n && n.startsWith(origin) && !seen.has(n)) {
+      const n = sameOriginUrl(h, originUrl);
+      if (n && !seen.has(n)) {
         seen.add(n);
         out.push(n);
       }
@@ -252,7 +276,8 @@ export async function enumerateUrls(
 ): Promise<string[]> {
   const startUrl = normalizeUrl(domain);
   if (!startUrl) throw new Error(`Invalid domain: ${domain}`);
-  const origin = new URL(startUrl).origin;
+  const originUrl = new URL(startUrl);
+  const origin = originUrl.origin;
 
   const robots = opts.respectRobots
     ? await loadRobots(origin)
@@ -278,7 +303,7 @@ export async function enumerateUrls(
     urls = await discoverByCrawl(
       browser,
       startUrl,
-      origin,
+      originUrl,
       robots.disallow,
       opts.respectRobots,
       opts.maxPages,
@@ -286,11 +311,11 @@ export async function enumerateUrls(
     );
   }
 
-  // 3. Normalize, filter to same origin, drop disallowed, dedupe.
+  // 3. Filter to same origin (scheme/www-tolerant), drop disallowed, dedupe.
   const deduped = new Set<string>();
   for (const u of urls) {
-    const n = normalizeUrl(u);
-    if (!n || !n.startsWith(origin)) continue;
+    const n = sameOriginUrl(u, originUrl);
+    if (!n) continue;
     if (opts.respectRobots && isDisallowed(n, robots.disallow)) continue;
     deduped.add(n);
   }
@@ -314,7 +339,7 @@ export async function enumerateUrls(
   // trackers (maps, video, event platforms) that a sitemap buries among news posts.
   // Then fill remaining slots with template breadth so the cap samples distinct page types.
   const inSet = (u: string) => deduped.has(u) && !pinned.includes(u);
-  const linked = (await homepageLinks(browser, startUrl, origin)).filter(inSet);
+  const linked = (await homepageLinks(browser, startUrl, originUrl)).filter(inSet);
   const linkedSet = new Set(linked);
   const rest = orderByTemplateDiversity(result.filter((u) => !pinned.includes(u) && !linkedSet.has(u)));
   result = [...pinned, ...linked, ...rest];
