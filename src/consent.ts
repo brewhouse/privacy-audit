@@ -151,16 +151,62 @@ export async function runAutoconsent(
 }
 
 /**
- * Heuristic banner scan — independent of autoconsent. Looks for a visible
- * consent/cookie container and classifies its buttons by accessible text.
+ * CMP signatures — data-driven so adding a provider is one entry, not a code branch.
+ * A signature matches if ANY of its signals is present (each signal is independent and
+ * robust on its own). Signals are evaluated in the page context.
+ *
+ * Ordered most-specific first; the generic IAB TCF API check is last so a named CMP wins.
+ * Signals anchored to live DOM (verified 2026-06-22):
+ *   - WPConsent: window.WPConsent global (rich API object), #wpconsent-root /
+ *     #wpconsent-container, and the plugin script path. The banner UI is injected
+ *     dynamically only when display checks pass, so the global/container/script are the
+ *     reliable signals — NOT the rendered buttons.
+ */
+export interface CmpSignature {
+  name: string;
+  globals: string[];
+  selectors: string[];
+}
+
+export const CMP_SIGNATURES: CmpSignature[] = [
+  {
+    name: "WPConsent",
+    globals: ["WPConsent", "wpconsent"],
+    selectors: ["#wpconsent-root", "#wpconsent-container", 'script[src*="wpconsent"]'],
+  },
+  {
+    name: "OneTrust",
+    globals: ["OneTrust"],
+    selectors: ["#onetrust-banner-sdk", 'script[src*="onetrust"]', 'script[src*="cookielaw.org"]'],
+  },
+  { name: "Cookiebot", globals: ["Cookiebot"], selectors: ["#CybotCookiebotDialog", 'script[src*="cookiebot"]'] },
+  { name: "Complianz", globals: ["Complianz", "complianz"], selectors: ["#cmplz-cookiebanner-container", ".cmplz-cookiebanner"] },
+  { name: "Borlabs Cookie", globals: ["BorlabsCookie"], selectors: ["#BorlabsCookieBox", "._brlbs-bar"] },
+  { name: "CookieYes", globals: [], selectors: ["#cookie-law-info-bar", 'script[src*="cookieyes"]'] },
+  { name: "Osano", globals: ["Osano"], selectors: [".osano-cm-window", 'script[src*="osano"]'] },
+  { name: "Usercentrics", globals: ["UC_UI"], selectors: ['script[src*="usercentrics"]', "#usercentrics-root"] },
+  { name: "Termly", globals: [], selectors: ['script[src*="termly"]', "#termly-code-snippet-support"] },
+  // Generic fallback: any IAB TCF v2 CMP exposes the __tcfapi function (see §10 future note).
+  { name: "IAB TCF CMP", globals: ["__tcfapi"], selectors: [] },
+];
+
+/**
+ * Heuristic banner scan — independent of autoconsent. Identifies the CMP via signatures,
+ * finds a visible consent container, and classifies its controls by accessible label.
+ *
+ * bannerPresent is true whenever a CMP is recognized OR a consent container is found — it
+ * can never report "no banner" while reporting accept/reject/preferences controls, because
+ * controls are only read from within a consent container. Controls are scoped to that
+ * container (not the whole document) so a stray footer "Settings"/"Privacy" link can't
+ * masquerade as a banner.
  */
 export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
   try {
-    return await page.evaluate(() => {
-      const ACCEPT = /\b(accept|allow|agree|got it|i understand|ok|enable|yes)\b/i;
-      const REJECT = /\b(reject|decline|deny|refuse|disagree|necessary only|essential only|no thanks)\b/i;
+    return await page.evaluate((signatures: CmpSignature[]) => {
+      const ACCEPT = /\b(accept|allow|agree|got it|i understand|enable|yes)\b/i;
+      const REJECT = /\b(reject|decline|deny|refuse|disagree|necessary only|essential only|no thanks|opt[- ]?out)\b/i;
       const SETTINGS = /\b(settings|preferences|manage|customi[sz]e|options|choices|configure)\b/i;
-      const BANNER_HINT = /(cookie|consent|gdpr|privacy|cmp|onetrust|cookiebot|complianz|borlabs)/i;
+      const CONTAINER_HINT = /(cookie|consent|gdpr|\bcmp\b|onetrust|cookiebot|complianz|borlabs|wpconsent|cookieyes|termly|osano|usercentrics)/i;
 
       const isVisible = (el: Element): boolean => {
         const r = el.getBoundingClientRect();
@@ -168,44 +214,62 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
         return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
       };
 
-      // Find a plausible banner container.
+      // CMP detection — data-driven, any signal matches.
+      let cmp: string | null = null;
+      for (const sig of signatures) {
+        const hasGlobal = sig.globals.some((k) => Boolean((window as any)[k]));
+        const hasSelector = sig.selectors.some((sel) => {
+          try {
+            return Boolean(document.querySelector(sel));
+          } catch {
+            return false;
+          }
+        });
+        if (hasGlobal || hasSelector) {
+          cmp = sig.name;
+          break;
+        }
+      }
+
+      // Find a visible consent container.
       let banner: Element | null = null;
       const containers = Array.from(
         document.querySelectorAll(
-          '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[aria-label*="cookie" i],[role="dialog"],[role="alertdialog"]',
+          '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[aria-label*="cookie" i],[role="dialog"],[role="alertdialog"]',
         ),
       );
       for (const c of containers) {
-        if (isVisible(c) && BANNER_HINT.test(c.id + " " + c.className + " " + (c.getAttribute("aria-label") ?? ""))) {
+        if (!isVisible(c)) continue;
+        const sig = `${c.id} ${c.className} ${c.getAttribute("aria-label") ?? ""}`;
+        if (CONTAINER_HINT.test(sig)) {
           banner = c;
           break;
         }
       }
 
-      const scope: ParentNode = banner ?? document;
-      const controls = Array.from(scope.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]'));
-      const texts = controls
-        .filter((el) => isVisible(el))
-        .map((el) => (el.textContent || (el as HTMLInputElement).value || "").trim())
-        .filter(Boolean);
-
-      // Identify the CMP from globals/markup.
-      let cmp: string | null = null;
-      const w = window as any;
-      if (w.OneTrust || document.getElementById("onetrust-banner-sdk")) cmp = "OneTrust";
-      else if (w.Cookiebot || document.getElementById("CybotCookiebotDialog")) cmp = "Cookiebot";
-      else if (w.Complianz || document.querySelector("#cmplz-cookiebanner-container")) cmp = "Complianz";
-      else if (document.querySelector("#BorlabsCookieBox")) cmp = "Borlabs Cookie";
-      else if (w.__tcfapi) cmp = "IAB TCF CMP";
+      // Classify controls ONLY within the consent container, by label/role.
+      let acceptAll = false;
+      let rejectAll = false;
+      let settings = false;
+      if (banner) {
+        const controls = Array.from(banner.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]'));
+        const texts = controls
+          .filter((el) => isVisible(el))
+          .map((el) => (el.textContent || (el as HTMLInputElement).value || "").trim())
+          .filter(Boolean);
+        acceptAll = texts.some((t) => ACCEPT.test(t));
+        rejectAll = texts.some((t) => REJECT.test(t));
+        settings = texts.some((t) => SETTINGS.test(t));
+      }
 
       return {
-        bannerPresent: banner !== null,
-        acceptAll: texts.some((t) => ACCEPT.test(t)),
-        rejectAll: texts.some((t) => REJECT.test(t)),
-        settings: texts.some((t) => SETTINGS.test(t)),
+        bannerPresent: cmp !== null || banner !== null,
+        acceptAll,
+        rejectAll,
+        settings,
         cmpIdentified: cmp,
       };
-    });
+    }, CMP_SIGNATURES);
   } catch {
     return { bannerPresent: false, acceptAll: false, rejectAll: false, settings: false, cmpIdentified: null };
   }

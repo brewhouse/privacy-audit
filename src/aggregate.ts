@@ -172,12 +172,10 @@ function buildConsentMechanism(captures: PageCapture[], inventory: InventoryItem
   const settings = captures.some((c) => c.consentUi.settings);
   const cmp = captures.map((c) => c.consentUi.cmpIdentified).find((x) => x) ?? null;
 
-  // Cross-check to suppress false positives: the heuristic can flag a "cookie"/"consent"
-  // container that isn't a real consent UI (e.g. a generic notice, or Consent Mode code).
-  // Only treat a banner as present if it also exposes a consent control or a known CMP —
-  // otherwise it's almost certainly not a functioning consent mechanism.
-  const rawBanner = captures.some((c) => c.consentUi.bannerPresent);
-  const anyBanner = rawBanner && (accept || reject || settings || cmp !== null);
+  // detectConsentUi already reports bannerPresent only for a recognized CMP or a real
+  // consent container (controls are read only inside that container), so a stray notice
+  // can't false-positive and a recognized CMP is never reported as "no banner".
+  const anyBanner = captures.some((c) => c.consentUi.bannerPresent);
 
   // Non-blocking: a banner exists but tracking still fired before consent.
   const trackersBeforeConsent = inventory.some(

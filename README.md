@@ -151,6 +151,28 @@ vars — see [`render.yaml`](./render.yaml) for the full list).
 [`Dockerfile`](./Dockerfile) + [`render.yaml`](./render.yaml)). Set the secret env vars in
 the dashboard. Use a **Standard** plan or larger — Chromium will OOM on 512 MB.
 
+## Tests
+
+```bash
+npm test   # builds, then runs the regression suite against the compiled output
+```
+
+Tests run against `dist/` (the compiled `tsc` output), not the TypeScript sources: a
+`page.evaluate()` callback transpiled by `tsx`/esbuild references a `__name` helper that is
+undefined in the browser context, so evaluate-heavy code must be exercised as the built
+artifact (which is also what production runs). Current coverage: WPConsent CMP detection
+(`test/wpconsent.test.ts`).
+
+## CMP detection
+
+Consent platforms are recognized via render-independent signals (a global object, a
+container element, or the plugin script path) defined as data in `CMP_SIGNATURES`
+([`consent.ts`](./src/consent.ts)) — add a provider by adding one entry. Banner presence is
+reported whenever a CMP is recognized **or** a real consent container is found; consent
+controls are only read from inside that container, so a stray footer "Settings" link can't
+masquerade as a banner. Supported: WPConsent, OneTrust, Cookiebot, Complianz, Borlabs,
+CookieYes, Osano, Usercentrics, Termly, and any IAB TCF v2 CMP (via `__tcfapi`).
+
 ## Important domain rules (from §6)
 
 - Strictly-necessary items (consent platform, security, CDN, payment) are **excluded**
