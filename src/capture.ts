@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, Page, Request } from "playwright";
-import { detectConsentUi, runAutoconsent } from "./consent.js";
+import { detectConsentUi, forceCmpBanner, runAutoconsent } from "./consent.js";
 import type {
   CapturePass,
   CapturedCookie,
@@ -13,6 +13,12 @@ import type {
 
 const NAV_TIMEOUT = 30000;
 const SETTLE_MS = 3500; // let deferred/GTM-injected requests fire
+
+// Present as a regulated-region (UK) visitor so geo-targeted consent banners are more
+// likely to display. Kept English (en-GB) so label-based control detection still works.
+// Note: this changes browser locale/timezone, not the egress IP — IP-geolocated CMPs may
+// still withhold the banner from our scan location (reported as such).
+const CAPTURE_CONTEXT = { locale: "en-GB", timezoneId: "Europe/London" } as const;
 // We write the HAR ourselves (see RequestRecorder), so context close no longer flushes
 // anything and stays fast even on pages with never-ending connections.
 const CONTEXT_CLOSE_TIMEOUT_MS = 15000;
@@ -339,7 +345,7 @@ export async function capturePage(
   let ctx: BrowserContext | null = null;
   let recorder: RequestRecorder | null = null;
   try {
-    ctx = await browser.newContext();
+    ctx = await browser.newContext({ ...CAPTURE_CONTEXT });
     recorder = new RequestRecorder(firstPartyHost);
     const page = await ctx.newPage();
     recorder.attach(page);
@@ -354,6 +360,15 @@ export async function capturePage(
       scripts: await readScripts(page),
     };
     capture.consentUi = await detectConsentUi(page);
+    // If a CMP is present but its banner didn't render (no controls seen), ask it to show
+    // and re-scan — captures accept/reject/preferences labels for the report when possible.
+    const ui = capture.consentUi;
+    if (ui.cmpIdentified && !(ui.acceptAll || ui.rejectAll || ui.settings)) {
+      await forceCmpBanner(page);
+      await page.waitForTimeout(1200);
+      const retry = await detectConsentUi(page);
+      if (retry.acceptAll || retry.rejectAll || retry.settings) capture.consentUi = retry;
+    }
     capture.consentMode = await detectConsentMode(page);
 
     await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 20000 }).catch(() => {});
@@ -388,7 +403,7 @@ export async function capturePage(
   if (opts.doReject && !capture.error) {
     let rctx: BrowserContext | null = null;
     try {
-      rctx = await browser.newContext();
+      rctx = await browser.newContext({ ...CAPTURE_CONTEXT });
       const recorder = new RequestRecorder(firstPartyHost);
       const page = await rctx.newPage();
       recorder.attach(page);

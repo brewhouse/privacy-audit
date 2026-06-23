@@ -336,6 +336,14 @@ function consentSection(report: AuditReport): (Paragraph | Table)[] {
       "Banner / CMP detection is automated (heuristic DOM scan cross-checked against autoconsent). A detected container is only reported as a banner if it exposes a consent control or a recognized CMP, to avoid false positives from generic notices or Consent Mode code. Automated detection can still err in both directions — manual verification in a browser is recommended before relying on this section for a legal demand.",
       { italics: true, color: "666666", size: 18 },
     ),
+    ...(c.cmpIdentified && !c.acceptAll && !c.rejectAll && !c.settings
+      ? [
+          para(
+            `A consent platform (${c.cmpIdentified}) was detected, but its banner did not display to the scan. Consent banners are commonly geo-targeted to regulated regions (EU/UK), so accept/reject/preferences controls could not be observed from the scan location — visitors outside the targeted regions likewise see no prompt. Verify the banner and its controls from a targeted region.`,
+            { italics: true, color: "666666", size: 18 },
+          ),
+        ]
+      : []),
   ];
 }
 

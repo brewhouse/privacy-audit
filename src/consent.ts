@@ -203,6 +203,44 @@ export const CMP_SIGNATURES: CmpSignature[] = [
 ];
 
 /**
+ * Best-effort: ask a recognized CMP to display its banner via its own JS API. Used when a
+ * CMP is detected but its banner did not render (commonly geo-gated), so we can capture the
+ * accept/reject/preferences labels. Safe no-op if the methods don't exist or the CMP
+ * declines to show (e.g. server-side geo logic short-circuits). Best-effort only.
+ */
+export async function forceCmpBanner(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const call = (obj: any, methods: string[]) => {
+        if (!obj) return;
+        for (const m of methods) {
+          if (typeof obj[m] === "function") {
+            try {
+              obj[m]();
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      };
+      const w = window as any;
+      call(w.WPConsent, ["showBanner", "showPreferences"]);
+      call(w.pressidiumCookieConsent, ["show", "showSettings"]);
+      call(w.cookieconsent, ["show"]);
+      call(w.UC_UI, ["showFirstLayer", "showSecondLayer"]);
+      call(w.Osano?.cm, ["showDrawer"]);
+      if (typeof w.OneTrust?.ToggleInfoDisplay === "function") {
+        try {
+          w.OneTrust.ToggleInfoDisplay();
+        } catch {
+          /* ignore */
+        }
+      }
+    })
+    .catch(() => {});
+}
+
+/**
  * Heuristic banner scan — independent of autoconsent. Identifies the CMP via signatures,
  * finds a visible consent container, and classifies its controls by accessible label.
  *
