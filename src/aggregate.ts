@@ -45,6 +45,11 @@ function isNecessaryHost(host: string): boolean {
 
 const LEGACY_UA_COOKIE = /^_gat_gtag_UA_|^__utm|^_gat_UA-/i;
 
+// Strictly-necessary cookies that must not count as pre-consent violations (§6):
+// the consent platform's own cookies, plus session/security/CDN essentials.
+const NECESSARY_COOKIE =
+  /^(wpconsent|wp_consent|cookieyes|cookielawinfo|cmplz|complianz|borlabs|cookieconsent|optanon|usprivacy|termly|osano|usercentrics|real_cookie_banner|moove_gdpr|__cf_bm|cf_clearance|_cfuvid|phpsessid|wordpress_test_cookie|wordpress_logged_in|wp-settings|woocommerce_(cart_hash|items_in_cart)|wp_woocommerce_session)/i;
+
 interface InventoryAccumulator extends InventoryItem {
   /** dedup helper: vendor+name key already in `pages` set */
   _pages: Set<string>;
@@ -143,9 +148,11 @@ function buildCookies(captures: PageCapture[]): CookieRecord[] {
     for (const c of cap.preConsent.cookies.concat(cap.afterAccept.cookies)) {
       const key = `${c.name}@${c.domain}`;
       const vendor = lookupVendor(`https://${c.domain}`);
-      const category: Category = LEGACY_UA_COOKIE.test(c.name)
-        ? "analytics"
-        : (vendor?.category ?? (c.party === "first" ? "functional" : "marketing"));
+      const category: Category = NECESSARY_COOKIE.test(c.name)
+        ? "necessary"
+        : LEGACY_UA_COOKIE.test(c.name)
+          ? "analytics"
+          : (vendor?.category ?? (c.party === "first" ? "functional" : "marketing"));
       const existing = byKey.get(key);
       const beforeConsent = preNames.has(key);
       if (existing) {

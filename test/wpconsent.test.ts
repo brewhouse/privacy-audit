@@ -143,4 +143,20 @@ describe("WPConsent CMP detection", () => {
     assert.ok(!titles.includes("No consent mechanism"), "no 'No consent mechanism' finding");
     assert.ok(!titles.includes("Non-blocking consent banner"), "no 'Non-blocking consent banner' finding");
   });
+
+  test("consent-platform cookies (wpconsent_*) are excluded from pre-consent counts", () => {
+    const cap = captureWith({ bannerPresent: true, acceptAll: true, rejectAll: true, settings: true, cmpIdentified: "WPConsent" });
+    cap.preConsent = {
+      requests: [],
+      scripts: [],
+      cookies: [
+        { name: "wpconsent_geolocation", domain: "example.com", party: "first", expiry: null },
+        { name: "_ga", domain: "example.com", party: "first", expiry: null },
+      ],
+    };
+    const report = buildReport("https://example.com/", [cap], "test");
+    const wpc = report.cookies.find((c) => c.name === "wpconsent_geolocation");
+    assert.equal(wpc?.category, "necessary", "consent-platform cookie categorized necessary");
+    assert.equal(report.summary.cookiesBeforeConsent, 1, "only the non-necessary cookie is counted");
+  });
 });
