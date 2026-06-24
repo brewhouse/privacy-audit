@@ -123,6 +123,7 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "ss-gtm.com": { vendor: "Google", name: "Server-side Google Tag Manager", category: "functional" },
   "use.typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
   "cdnjs.cloudflare.com": { vendor: "Cloudflare", name: "cdnjs", category: "functional" },
+  "challenges.cloudflare.com": { vendor: "Cloudflare", name: "Cloudflare Turnstile (CAPTCHA)", category: "functional" },
   "ytimg.com": { vendor: "Google", name: "YouTube (static images)", category: "functional" },
 
   // --- Performance / monitoring (functional) ---
