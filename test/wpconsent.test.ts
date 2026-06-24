@@ -144,6 +144,23 @@ describe("WPConsent CMP detection", () => {
     assert.ok(!titles.includes("Non-blocking consent banner"), "no 'Non-blocking consent banner' finding");
   });
 
+  test("decline finding is suppressed when the site blocks before consent (reject-automation artifact)", () => {
+    const cap = captureWith({ bannerPresent: true, acceptAll: true, rejectAll: true, settings: true, cmpIdentified: "WPConsent" });
+    // Nothing fires before consent (site blocks on load), but the reject pass "leaked" GA —
+    // i.e. autoconsent failed to reject this CMP and granted instead. Must NOT be flagged.
+    cap.afterReject = {
+      requests: [
+        { url: "https://www.google-analytics.com/g/collect?v=2", domain: "www.google-analytics.com", resourceType: "image", isThirdParty: true, isFont: false },
+      ],
+      cookies: [],
+      scripts: [],
+    };
+    const report = buildReport("https://example.com/", [cap], "test");
+    assert.equal(report.consentMechanism.blocksBeforeConsent, true, "site blocks before consent");
+    const titles = report.findings.map((f) => f.title);
+    assert.ok(!titles.includes("Consent banner does not block on decline"), "no false 'does not block on decline' finding");
+  });
+
   test("consent-platform cookies (wpconsent_*) are excluded from pre-consent counts", () => {
     const cap = captureWith({ bannerPresent: true, acceptAll: true, rejectAll: true, settings: true, cmpIdentified: "WPConsent" });
     cap.preConsent = {

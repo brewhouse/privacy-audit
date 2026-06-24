@@ -307,7 +307,13 @@ function buildFindingsAndRisk(
     }
     if (hit) declinePages.add(cap.path);
   }
-  if (declineResources.size) {
+  // Only trust the decline result when the site does NOT already block before consent.
+  // If pre-consent is clean (banner blocks on load), an afterReject leak almost always
+  // means our automated opt-out failed to reject this CMP and instead granted consent
+  // (autoconsent doesn't reliably reject every CMP, e.g. WPConsent) — reporting "doesn't
+  // block on decline" there would be a false positive against a compliant site. A
+  // genuinely broken reject would also leak before consent, which is covered above.
+  if (declineResources.size && !consent.blocksBeforeConsent) {
     if (consent.bannerPresent) risk += 20; // a banner that doesn't actually gate on reject
     findings.push({
       severity: "high",
