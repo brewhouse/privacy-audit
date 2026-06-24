@@ -18,7 +18,9 @@ const SETTLE_MS = 3500; // let deferred/GTM-injected requests fire
 // likely to display. Kept English (en-GB) so label-based control detection still works.
 // Note: this changes browser locale/timezone, not the egress IP — IP-geolocated CMPs may
 // still withhold the banner from our scan location (reported as such).
-const CAPTURE_CONTEXT = { locale: "en-GB", timezoneId: "Europe/London" } as const;
+// ignoreHTTPSErrors so a cert problem (e.g. a cert that omits the www host) doesn't blank
+// the whole scan — otherwise pages fail to load and the site falsely scores 100/100.
+const CAPTURE_CONTEXT = { locale: "en-GB", timezoneId: "Europe/London", ignoreHTTPSErrors: true } as const;
 // We write the HAR ourselves (see RequestRecorder), so context close no longer flushes
 // anything and stays fast even on pages with never-ending connections.
 const CONTEXT_CLOSE_TIMEOUT_MS = 15000;

@@ -211,7 +211,7 @@ async function discoverByCrawl(
   const queue = [startUrl];
   const visited = new Set<string>();
   const found: string[] = [];
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
 
   while (queue.length && found.length < limit) {
     const current = queue.shift()!;
@@ -247,7 +247,7 @@ async function discoverByCrawl(
  * prioritize high-value pages so a --max-pages cap doesn't fill up with news articles.
  */
 async function homepageLinks(browser: Browser, homeUrl: string, originUrl: URL): Promise<string[]> {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
     const page = await ctx.newPage();
     await page.goto(homeUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
