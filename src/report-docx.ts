@@ -423,31 +423,48 @@ function findingDetail(f: Finding): string {
   return d;
 }
 
-/** True when nothing actionable was found — drives maintenance vs. remediation wording. */
-function isCompliant(report: AuditReport): boolean {
-  return report.findings.length === 0;
+/** True when non-essential trackers actually fire before consent — the real remediation
+ *  driver. Findings like dev/QA tooling or reCAPTCHA can exist without anything firing
+ *  pre-consent, in which case "block trackers before consent" advice would be misleading. */
+function hasPreConsentTracking(report: AuditReport): boolean {
+  const titles = new Set(report.findings.map((f) => f.title));
+  return (
+    report.summary.trackersBeforeConsent > 0 ||
+    titles.has("Third-party tracking before consent") ||
+    titles.has("Non-blocking consent banner") ||
+    titles.has("No consent mechanism") ||
+    titles.has("Consent banner does not block on decline") ||
+    titles.has("Trackers persist after opt-out attempt")
+  );
 }
 
 function recommendationsSection(report: AuditReport): (Paragraph | Table)[] {
   const titles = new Set(report.findings.map((f) => f.title));
+  const preConsent = hasPreConsentTracking(report);
   const tech: string[] = [];
 
-  if (isCompliant(report)) {
-    // Clean result — maintenance, not remediation.
+  // Finding-specific recommendations (only when that finding exists).
+  if (preConsent) tech.push("Block non-essential scripts (analytics, advertising, embeds) until the visitor opts in.");
+  if (titles.has("Consent Mode v2 signals present but not gating"))
+    tech.push("Configure Google Consent Mode v2 to default to “denied” and honor GPC signals.");
+  if (titles.has("Legacy Universal Analytics tags"))
+    tech.push("Remove retired Universal Analytics tags/cookies that still load — dead weight.");
+  if (titles.has("Development / QA tooling on production"))
+    tech.push("Remove development / QA tooling (e.g. BugHerd) from the production site — it should not be on a live site even if gated.");
+  // Pre-consent-blocking advice only when something actually fires before consent.
+  if (preConsent) {
+    tech.push("Manually block any scripts hardcoded in the theme that the consent platform does not auto-detect.");
+    tech.push("Re-test in the browser to confirm nothing non-essential fires before consent, and document the result.");
+  }
+
+  if (tech.length === 0) {
+    // Fully clean — maintenance, not remediation.
     tech.push("No non-essential trackers were observed firing before consent — the current consent setup is working. Maintain it.");
     tech.push("As new analytics, advertising, or embedded tools are added, add matching blocking/consent rules so they stay gated until consent.");
     tech.push("Re-scan periodically (e.g. quarterly) and after major site or marketing-stack changes to confirm the gating still holds.");
-  } else {
-    if (titles.has("Third-party tracking before consent") || titles.has("Non-blocking consent banner") || titles.has("No consent mechanism"))
-      tech.push("Block non-essential scripts (analytics, advertising, embeds) until the visitor opts in.");
-    if (titles.has("Consent Mode v2 signals present but not gating"))
-      tech.push("Configure Google Consent Mode v2 to default to “denied” and honor GPC signals.");
-    if (titles.has("Legacy Universal Analytics tags"))
-      tech.push("Remove retired Universal Analytics tags/cookies that still load — dead weight that fires before consent.");
-    if (titles.has("Development / QA tooling on production"))
-      tech.push("Remove development/QA tooling (e.g. BugHerd) from the production site.");
-    tech.push("Manually block any scripts hardcoded in the theme that the consent platform does not auto-detect.");
-    tech.push("Re-test in the browser to confirm nothing non-essential fires before consent, and document the result.");
+  } else if (!preConsent) {
+    // Findings exist (e.g. dev/QA tooling) but nothing fires before consent — make that clear.
+    tech.push("No non-essential trackers were observed firing before consent; once the item(s) above are addressed, re-scan periodically to confirm the gating still holds.");
   }
 
   const out: (Paragraph | Table)[] = [h1("7. Recommendations"), h2("7.1 Technical (implementation)")];
@@ -463,19 +480,29 @@ function recommendationsSection(report: AuditReport): (Paragraph | Table)[] {
 }
 
 function nextStepsSection(report: AuditReport): (Paragraph | Table)[] {
-  const steps = isCompliant(report)
-    ? [
-        "No non-essential trackers were observed firing before consent on the pages tested — no remediation is required at this time.",
-        "Re-scan periodically (e.g. quarterly) and after adding any new analytics, advertising, or embedded tools.",
-        "Keep the consent platform and its blocking / consent-mode rules updated as the site evolves.",
-        "Retain this report and the raw evidence (HAR + screenshots) as a compliance baseline.",
-      ]
-    : [
-        "Review this assessment with the client and their legal counsel.",
-        "Prioritize blocking non-essential trackers before consent.",
-        "Implement the technical recommendations and reconcile the privacy policy.",
-        "Schedule a re-scan to verify the fixes and preserve a new evidence baseline.",
-      ];
+  let steps: string[];
+  if (hasPreConsentTracking(report)) {
+    steps = [
+      "Review this assessment with the client and their legal counsel.",
+      "Prioritize blocking non-essential trackers before consent.",
+      "Implement the technical recommendations and reconcile the privacy policy.",
+      "Schedule a re-scan to verify the fixes and preserve a new evidence baseline.",
+    ];
+  } else if (report.findings.length === 0) {
+    steps = [
+      "No non-essential trackers were observed firing before consent on the pages tested — no remediation is required at this time.",
+      "Re-scan periodically (e.g. quarterly) and after adding any new analytics, advertising, or embedded tools.",
+      "Keep the consent platform and its blocking / consent-mode rules updated as the site evolves.",
+      "Retain this report and the raw evidence (HAR + screenshots) as a compliance baseline.",
+    ];
+  } else {
+    // Findings remain but nothing fires before consent (e.g. dev/QA tooling still installed).
+    steps = [
+      "No non-essential trackers were observed firing before consent — the consent setup is gating correctly.",
+      "Address the remaining item(s) in the findings above (e.g. remove development / QA tooling from production).",
+      "Re-scan after the change, then periodically; retain this report and evidence as a baseline.",
+    ];
+  }
   const out: (Paragraph | Table)[] = [h1("8. Proposed Next Steps")];
   steps.forEach((s) => out.push(new Paragraph({ numbering: { reference: "numbers2", level: 0 }, children: [new TextRun(s)] })));
   return out;
