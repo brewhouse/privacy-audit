@@ -86,6 +86,10 @@ export interface AuditReport {
   consentMechanism: ConsentMechanism;
   runtime: RuntimeSplit;
   findings: Finding[];
+  /** Site-wide distinct third-party hosts contacted before consent (backs the summary count). */
+  beforeConsentDomains: string[];
+  /** URL of a privacy/cookie policy link found on the site, or null if none was found. */
+  privacyPolicyUrl: string | null;
 }
 
 // ---- Internal capture types (not part of the output contract) ----
@@ -145,5 +149,6 @@ export interface PageCapture {
   consentMode: ConsentModeSignals;
   harPath: string | null;
   screenshotPath: string | null;
+  privacyPolicyUrl?: string | null;
   error?: string;
 }

@@ -43,6 +43,28 @@ function isNecessaryHost(host: string): boolean {
   return NECESSARY_HOST_HINTS.some((h) => host.includes(h));
 }
 
+// Obvious Google-owned hosts — so an unclassified one reads "Google-owned" rather than
+// "Unclassified", which looks like the classifier gave up on a known owner.
+const GOOGLE_OWNED = new Set([
+  "google.com", "googleapis.com", "gstatic.com", "withgoogle.com", "googleusercontent.com", "goo.gl",
+]);
+
+/**
+ * Site-wide distinct third-party domains contacted before consent (excludes necessary
+ * infra). Counted by registrable domain (eTLD+1) so many subdomains of one service —
+ * e.g. dozens of *.hcaptcha.com challenge hosts — count as a single domain, which is the
+ * meaningful, defensible figure rather than an inflated host count.
+ */
+function collectBeforeConsentDomains(captures: PageCapture[]): string[] {
+  const set = new Set<string>();
+  for (const cap of captures) {
+    for (const r of cap.preConsent.requests) {
+      if (r.isThirdParty && !isNecessaryHost(r.domain)) set.add(regDomain(r.domain));
+    }
+  }
+  return [...set].sort();
+}
+
 const LEGACY_UA_COOKIE = /^_gat_gtag_UA_|^__utm|^_gat_UA-/i;
 
 // Strictly-necessary cookies that must not count as pre-consent violations (§6):
@@ -119,9 +141,10 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
         // Unclassified third party — surface it rather than dropping it.
         const dom = regDomain(req.domain);
         const necessary = isNecessaryHost(req.domain);
+        const googleOwned = GOOGLE_OWNED.has(dom);
         item = ensure(`unclassified::${dom}`, () => ({
-          technology: dom,
-          vendor: necessary ? "Infrastructure / CDN" : "Unclassified",
+          technology: googleOwned ? `${dom} (Google-owned, purpose undetermined)` : dom,
+          vendor: necessary ? "Infrastructure / CDN" : googleOwned ? "Google" : "Unclassified",
           purpose: necessary ? "Strictly necessary" : "Unclassified third party",
           dataRecipient: dom,
           category: necessary ? "necessary" : "unknown",
@@ -389,6 +412,7 @@ function buildSummary(
   cookies: CookieRecord[],
   captures: PageCapture[],
   privacyScore: number,
+  beforeConsentDomains: string[],
 ): Summary {
   const violatingBefore = inventory.filter(
     (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
@@ -396,12 +420,6 @@ function buildSummary(
   const cookiesBefore = cookies.filter(
     (c) => c.beforeConsent && c.category !== "necessary",
   );
-  const domainsBefore = new Set<string>();
-  for (const cap of captures) {
-    for (const r of cap.preConsent.requests) {
-      if (r.isThirdParty && !isNecessaryHost(r.domain)) domainsBefore.add(r.domain);
-    }
-  }
   const fonts = new Set<string>();
   for (const cap of captures) {
     for (const r of cap.preConsent.requests.concat(cap.afterAccept.requests)) {
@@ -413,7 +431,7 @@ function buildSummary(
     thirdPartyServices: inventory.length,
     trackersBeforeConsent: violatingBefore.length,
     cookiesBeforeConsent: cookiesBefore.length,
-    domainsBeforeConsent: domainsBefore.size,
+    domainsBeforeConsent: beforeConsentDomains.length, // backed by report.beforeConsentDomains
     thirdPartyFonts: fonts.size,
     privacyScore,
   };
@@ -461,7 +479,9 @@ export function buildReport(
   const consentMechanism = buildConsentMechanism(captures, inventory);
   const runtime = buildRuntime(captures);
   const { findings, privacyScore } = buildFindingsAndRisk(captures, inventory, cookies, consentMechanism);
-  const summary = buildSummary(inventory, cookies, captures, privacyScore);
+  const beforeConsentDomains = collectBeforeConsentDomains(captures);
+  const summary = buildSummary(inventory, cookies, captures, privacyScore, beforeConsentDomains);
+  const privacyPolicyUrl = captures.map((c) => c.privacyPolicyUrl).find((u): u is string => Boolean(u)) ?? null;
 
   return {
     scan: {
@@ -476,5 +496,7 @@ export function buildReport(
     consentMechanism,
     runtime,
     findings,
+    beforeConsentDomains,
+    privacyPolicyUrl,
   };
 }

@@ -91,7 +91,9 @@ This shape maps directly onto the report sections. Keep field names stable.
       "pages": ["/"],
       "resources": ["_ga", "_gid", "www.google-analytics.com"]
     }
-  ]
+  ],
+  "beforeConsentDomains": ["google-analytics.com", "googletagmanager.com"],  // site-wide registrable domains before consent (backs summary.domainsBeforeConsent)
+  "privacyPolicyUrl": "https://www.example.com/privacy-policy"               // detected policy link, or null
 }
 ```
 

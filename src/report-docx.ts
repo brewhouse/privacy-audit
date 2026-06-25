@@ -12,7 +12,6 @@ import {
   ShadingType,
   Table,
   TableCell,
-  TableOfContents,
   TableRow,
   TextRun,
   VerticalAlign,
@@ -237,9 +236,16 @@ function executiveSummary(report: AuditReport): (Paragraph | Table)[] {
       ["Third-party fonts", String(s.thirdPartyFonts)],
       ["Pages scanned", String(report.scan.pagesScanned.length)],
     ]),
-    new Paragraph({ spacing: { after: 120 }, children: [] }),
-    h2("Top priorities"),
   ];
+  if ((report.beforeConsentDomains ?? []).length) {
+    out.push(
+      para(
+        `“Distinct third-party domains before consent” (${s.domainsBeforeConsent}) is a site-wide total across all ${report.scan.pagesScanned.length} page(s) tested — the full list is in the appendix. Section 4 shows runtime detail for one representative page only.`,
+        { italics: true, color: "666666", size: 18 },
+      ),
+    );
+  }
+  out.push(new Paragraph({ spacing: { after: 120 }, children: [] }), h2("Top priorities"));
 
   if (top.length === 0) {
     out.push(para("No material tracking-before-consent issues were observed on the pages tested.", { italics: true }));
@@ -301,8 +307,17 @@ function inventorySection(report: AuditReport): (Paragraph | Table)[] {
     h1("2. Tracking Technology Inventory"),
     para(`${report.inventory.length} third-party service(s) were identified and classified by vendor and purpose.`),
   ];
-  if (rows.length) out.push(dataTable(["Tool", "Vendor", "Purpose", "Category", "Before consent", "Pages"], widths, rows));
-  else out.push(para("No third-party services were detected.", { italics: true }));
+  if (rows.length) {
+    out.push(dataTable(["Tool", "Vendor", "Purpose", "Category", "Before consent", "Pages"], widths, rows));
+    out.push(
+      para(
+        `“Before consent” marks every service that loads before a consent choice. The summary’s “trackers before consent” (${report.summary.trackersBeforeConsent}) counts only the analytics / marketing / non-essential subset — the categories that count as a privacy concern — which is why it is lower than the number of rows here.`,
+        { italics: true, color: "666666", size: 18 },
+      ),
+    );
+  } else {
+    out.push(para("No third-party services were detected.", { italics: true }));
+  }
   return out;
 }
 
@@ -383,13 +398,22 @@ function runtimeSection(report: AuditReport): (Paragraph | Table)[] {
 
 function policyAlignmentSection(report: AuditReport): (Paragraph | Table)[] {
   const review = report.inventory.filter((i) => i.inPolicy === "review");
-  const out: (Paragraph | Table)[] = [
-    h1("5. Privacy Policy Alignment"),
+  const out: (Paragraph | Table)[] = [h1("5. Privacy Policy Alignment")];
+
+  // State the one concrete finding we can make automatically: was a policy link found?
+  out.push(
+    report.privacyPolicyUrl
+      ? para(`A linked privacy / cookie policy was found on the site: ${report.privacyPolicyUrl}`, { bold: true })
+      : para("No linked privacy / cookie policy was found on the pages scanned — confirm one is published and linked in the footer.", {
+          bold: true,
+          color: "7a1f1f",
+        }),
+  );
+  out.push(
     para(
-      "Each detected tool should be reconciled against the site’s published privacy / cookie policy. The audit flags tools for review; " +
-        "confirming whether each is disclosed is a manual step for the client and their counsel.",
+      "Whether each tool below is actually disclosed in that policy is a manual reconciliation step for the client and their counsel — the audit flags the tools to check, it does not interpret policy text.",
     ),
-  ];
+  );
   if (review.length) {
     out.push(para("Tools to reconcile against the policy:", { bold: true }));
     review.forEach((i) => out.push(bullet(`${i.technology} (${i.vendor}) — ${i.purpose}`)));
@@ -508,6 +532,49 @@ function nextStepsSection(report: AuditReport): (Paragraph | Table)[] {
   return out;
 }
 
+/** Static table of contents — rendered as plain text so it always shows (an auto TOC
+ *  field renders blank until Word updates it, which looks unfinished in a deliverable). */
+function contentsSection(report: AuditReport): Paragraph[] {
+  const items = [
+    "Important Notice",
+    "Executive Summary",
+    "1. Scope & Methodology",
+    "2. Tracking Technology Inventory",
+    "3. Consent Mechanism Review",
+    "4. Runtime Behavior Findings",
+    "5. Privacy Policy Alignment",
+    "6. Risk Findings",
+    "7. Recommendations",
+    "8. Proposed Next Steps",
+  ];
+  if ((report.beforeConsentDomains ?? []).length) items.push("Appendix — Third-party domains contacted before consent");
+  return [
+    h1("Contents"),
+    ...items.map((i) => new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: i, color: BLUE })] })),
+  ];
+}
+
+/** Appendix listing the full site-wide set of domains contacted before consent, so the
+ *  summary's count is backed up in the document (not just in evidence). */
+function appendixSection(report: AuditReport): (Paragraph | Table)[] {
+  const domains = report.beforeConsentDomains ?? [];
+  if (!domains.length) return [];
+  const out: (Paragraph | Table)[] = [
+    new Paragraph({ pageBreakBefore: true, children: [] }),
+    h1("Appendix — Third-party domains contacted before consent"),
+    para(
+      `The ${domains.length} distinct third-party host(s) below were contacted before any consent choice, aggregated across all ${report.scan.pagesScanned.length} page(s) tested. Strictly-necessary infrastructure (consent platform, CDN, security, payment) is excluded. Full request-level detail is in the per-page HAR evidence.`,
+    ),
+  ];
+  const widths = [4680, 4680];
+  const rows: TableCell[][] = [];
+  for (let i = 0; i < domains.length; i += 2) {
+    rows.push([cell(domains[i], widths[0]), cell(domains[i + 1] ?? "", widths[1])]);
+  }
+  out.push(dataTable(["Domain", "Domain"], widths, rows));
+  return out;
+}
+
 // ---------- top-level document ----------
 
 export function buildReportDocument(report: AuditReport, options: DocxOptions = {}): Document {
@@ -580,8 +647,7 @@ export function buildReportDocument(report: AuditReport, options: DocxOptions = 
         },
         children: [
           ...titleBlock(report, o),
-          h1("Contents"),
-          new TableOfContents("Contents", { hyperlink: true, headingStyleRange: "1-2" }),
+          ...contentsSection(report),
           new Paragraph({ pageBreakBefore: true, children: [] }),
           h1("Important Notice"),
           noticeBox(),
@@ -596,6 +662,7 @@ export function buildReportDocument(report: AuditReport, options: DocxOptions = 
           ...riskFindingsSection(report),
           ...recommendationsSection(report),
           ...nextStepsSection(report),
+          ...appendixSection(report),
         ],
       },
     ],

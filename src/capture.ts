@@ -284,6 +284,25 @@ async function detectConsentMode(page: Page): Promise<ConsentModeSignals> {
   }
 }
 
+/** Find a linked privacy / cookie policy on the page (for the §5 policy-alignment finding). */
+async function detectPrivacyPolicy(page: Page): Promise<string | null> {
+  try {
+    return await page.evaluate(() => {
+      const labelRe = /privacy[\s-]?(policy|notice|statement)|cookie[\s-]?(policy|notice)|data\s?protection/i;
+      const hrefRe = /privacy|cookie-?policy|datenschutz/i;
+      for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+        const text = (a.textContent || "").trim();
+        const href = (a as HTMLAnchorElement).href;
+        if (href.startsWith("javascript:")) continue;
+        if (labelRe.test(text) || hrefRe.test(href)) return href;
+      }
+      return null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function settle(page: Page) {
   try {
     await page.waitForLoadState("networkidle", { timeout: SETTLE_MS });
@@ -341,6 +360,7 @@ export async function capturePage(
     consentMode: { present: false, defaultDenied: false, defaultGranted: false },
     harPath: null,
     screenshotPath: null,
+    privacyPolicyUrl: null,
   };
 
   // ---- Pass 1 + 2: pre-consent and after-accept (shared context) ----
@@ -361,6 +381,7 @@ export async function capturePage(
       cookies: await readCookies(ctx, firstPartyHost),
       scripts: await readScripts(page),
     };
+    capture.privacyPolicyUrl = await detectPrivacyPolicy(page);
     capture.consentUi = await detectConsentUi(page);
     // If a CMP is present but its banner didn't render (no controls seen), ask it to show
     // and re-scan — captures accept/reject/preferences labels for the report when possible.
