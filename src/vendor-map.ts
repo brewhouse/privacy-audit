@@ -93,6 +93,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
 
   // --- Analytics / heatmaps ---
   "crazyegg.com": { vendor: "Crazy Egg", name: "Crazy Egg", category: "analytics" },
+  "atrk.js": { vendor: "atrk", name: "atrk Web Metrics", category: "analytics" },
+  "alexametrics.com": { vendor: "Alexa Metrics", name: "Alexa / atrk Metrics", category: "analytics" },
 
   // --- Functional / sharing / embeds ---
   "static.addtoany.com": { vendor: "AddToAny", name: "AddToAny Share", category: "functional" },
@@ -106,6 +108,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "vimeo.com": { vendor: "Vimeo", name: "Vimeo", category: "functional" },
   "vimeocdn.com": { vendor: "Vimeo", name: "Vimeo (CDN)", category: "functional" },
   "calendly.com": { vendor: "Calendly", name: "Calendly Scheduling", category: "functional" },
+  "apex.live": { vendor: "ApexChat", name: "ApexChat (live chat)", category: "functional" },
+  "vialivechat.com": { vendor: "ApexChat", name: "ViaLiveChat / ApexChat (live chat)", category: "functional" },
   "captivate.fm": { vendor: "Captivate", name: "Captivate Podcast Player", category: "functional" },
   "ctctcdn.com": { vendor: "Constant Contact", name: "Constant Contact", category: "marketing" },
   "constantcontact.com": { vendor: "Constant Contact", name: "Constant Contact", category: "marketing" },
