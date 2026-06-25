@@ -284,22 +284,28 @@ async function detectConsentMode(page: Page): Promise<ConsentModeSignals> {
   }
 }
 
-/** Find a linked privacy / cookie policy on the page (for the §5 policy-alignment finding). */
-async function detectPrivacyPolicy(page: Page): Promise<string | null> {
+/** Find linked privacy and cookie policies on the page (for the §5 policy-alignment finding). */
+async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl: string | null; cookiePolicyUrl: string | null }> {
   try {
     return await page.evaluate(() => {
-      const labelRe = /privacy[\s-]?(policy|notice|statement)|cookie[\s-]?(policy|notice)|data\s?protection/i;
-      const hrefRe = /privacy|cookie-?policy|datenschutz/i;
+      const cookieLabel = /cookie[\s-]?(policy|notice|statement|preferences?)/i;
+      const cookieHref = /cookie-?(policy|notice)/i;
+      const privacyLabel = /privacy[\s-]?(policy|notice|statement)|data\s?protection|datenschutz/i;
+      const privacyHref = /privacy|datenschutz/i;
+      let privacy: string | null = null;
+      let cookie: string | null = null;
       for (const a of Array.from(document.querySelectorAll("a[href]"))) {
         const text = (a.textContent || "").trim();
         const href = (a as HTMLAnchorElement).href;
         if (href.startsWith("javascript:")) continue;
-        if (labelRe.test(text) || hrefRe.test(href)) return href;
+        if (!cookie && (cookieLabel.test(text) || cookieHref.test(href))) cookie = href;
+        else if (!privacy && (privacyLabel.test(text) || privacyHref.test(href))) privacy = href;
+        if (privacy && cookie) break;
       }
-      return null;
+      return { privacyPolicyUrl: privacy, cookiePolicyUrl: cookie };
     });
   } catch {
-    return null;
+    return { privacyPolicyUrl: null, cookiePolicyUrl: null };
   }
 }
 
@@ -361,6 +367,7 @@ export async function capturePage(
     harPath: null,
     screenshotPath: null,
     privacyPolicyUrl: null,
+    cookiePolicyUrl: null,
   };
 
   // ---- Pass 1 + 2: pre-consent and after-accept (shared context) ----
@@ -381,7 +388,9 @@ export async function capturePage(
       cookies: await readCookies(ctx, firstPartyHost),
       scripts: await readScripts(page),
     };
-    capture.privacyPolicyUrl = await detectPrivacyPolicy(page);
+    const policies = await detectPolicyLinks(page);
+    capture.privacyPolicyUrl = policies.privacyPolicyUrl;
+    capture.cookiePolicyUrl = policies.cookiePolicyUrl;
     capture.consentUi = await detectConsentUi(page);
     // If a CMP is present but its banner didn't render (no controls seen), ask it to show
     // and re-scan — captures accept/reject/preferences labels for the report when possible.

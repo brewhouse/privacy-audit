@@ -318,6 +318,40 @@ function inventorySection(report: AuditReport): (Paragraph | Table)[] {
   } else {
     out.push(para("No third-party services were detected.", { italics: true }));
   }
+
+  // 2.1 Cookies — name, domain, party, before-consent, category, expiry.
+  out.push(h2("2.1 Cookies observed"));
+  const cookies = report.cookies ?? [];
+  if (cookies.length) {
+    const cw = [2200, 1900, 900, 1100, 1360, 1900];
+    const fmtExpiry = (e: string | null): string => {
+      if (!e) return "Session";
+      const d = new Date(e);
+      return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    };
+    const crows = cookies.slice(0, ROW_CAP).map((c) => {
+      const flagged = c.beforeConsent && c.category !== "necessary";
+      return [
+        cell(c.name, cw[0]),
+        cell(c.domain, cw[1]),
+        cell(c.party, cw[2]),
+        cell(yesNo(c.beforeConsent), cw[3], { fill: flagged ? RED_FILL : GREEN_FILL, align: AlignmentType.CENTER }),
+        cell(c.category, cw[4]),
+        cell(fmtExpiry(c.expiry), cw[5]),
+      ];
+    });
+    out.push(dataTable(["Cookie", "Domain", "Party", "Before consent", "Category", "Expiry"], cw, crows));
+    if (cookies.length > ROW_CAP) out.push(para(`…and ${cookies.length - ROW_CAP} more (see report.json).`, { italics: true }));
+    const before = cookies.filter((c) => c.beforeConsent && c.category !== "necessary").length;
+    out.push(
+      para(
+        `${cookies.length} cookie(s) observed; ${before} non-essential cookie(s) set before consent. Expiry dates are when each cookie is set to persist.`,
+        { italics: true, color: "666666", size: 18 },
+      ),
+    );
+  } else {
+    out.push(para("No cookies were observed on the pages tested.", { italics: true }));
+  }
   return out;
 }
 
@@ -400,14 +434,14 @@ function policyAlignmentSection(report: AuditReport): (Paragraph | Table)[] {
   const review = report.inventory.filter((i) => i.inPolicy === "review");
   const out: (Paragraph | Table)[] = [h1("5. Privacy Policy Alignment")];
 
-  // State the one concrete finding we can make automatically: was a policy link found?
+  // State the concrete findings we can make automatically: were policy links found?
   out.push(
     report.privacyPolicyUrl
-      ? para(`A linked privacy / cookie policy was found on the site: ${report.privacyPolicyUrl}`, { bold: true })
-      : para("No linked privacy / cookie policy was found on the pages scanned — confirm one is published and linked in the footer.", {
-          bold: true,
-          color: "7a1f1f",
-        }),
+      ? para(`Privacy policy: found — ${report.privacyPolicyUrl}`, { bold: true })
+      : para("Privacy policy: not found on the pages scanned — confirm one is published and linked (typically in the footer).", { bold: true, color: "7a1f1f" }),
+    report.cookiePolicyUrl
+      ? para(`Cookie policy: found — ${report.cookiePolicyUrl}`, { bold: true })
+      : para("Cookie policy: not found on the pages scanned — a dedicated cookie policy listing the cookies in use is recommended.", { bold: true, color: "7a1f1f" }),
   );
   out.push(
     para(

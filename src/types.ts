@@ -88,8 +88,10 @@ export interface AuditReport {
   findings: Finding[];
   /** Site-wide distinct third-party hosts contacted before consent (backs the summary count). */
   beforeConsentDomains: string[];
-  /** URL of a privacy/cookie policy link found on the site, or null if none was found. */
+  /** URL of a privacy policy link found on the site, or null if none was found. */
   privacyPolicyUrl: string | null;
+  /** URL of a cookie policy link found on the site, or null if none was found. */
+  cookiePolicyUrl: string | null;
 }
 
 // ---- Internal capture types (not part of the output contract) ----
@@ -150,5 +152,6 @@ export interface PageCapture {
   harPath: string | null;
   screenshotPath: string | null;
   privacyPolicyUrl?: string | null;
+  cookiePolicyUrl?: string | null;
   error?: string;
 }

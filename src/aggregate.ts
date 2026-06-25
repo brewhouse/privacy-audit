@@ -67,6 +67,11 @@ function collectBeforeConsentDomains(captures: PageCapture[]): string[] {
 
 const LEGACY_UA_COOKIE = /^_gat_gtag_UA_|^__utm|^_gat_UA-/i;
 
+// Classify common tracking cookies by name, so first-party analytics/ad cookies (e.g.
+// GA4's _ga / _ga_<id>) are labeled correctly instead of defaulting to "functional".
+const ANALYTICS_COOKIE = /^_ga(_|$)|^_gid$|^_gat(_|$)|^_dc_gtm_|^_clck$|^_clsk$|^_hj|^__hs(tc|sc|src)$|^hubspotutk$|^_omappvp$|^_pk_(id|ses)/i;
+const MARKETING_COOKIE = /^_gcl|^_fbp$|^_fbc$|^fr$|^_uet|^muid$|^ide$|^test_cookie$|^_ttp$|^anonchk$|^_pin_unauth$|^personalization_id$|^_scid$/i;
+
 // Strictly-necessary cookies that must not count as pre-consent violations (§6):
 // the consent platform's own cookies, plus session/security/CDN essentials.
 const NECESSARY_COOKIE =
@@ -173,9 +178,11 @@ function buildCookies(captures: PageCapture[]): CookieRecord[] {
       const vendor = lookupVendor(`https://${c.domain}`);
       const category: Category = NECESSARY_COOKIE.test(c.name)
         ? "necessary"
-        : LEGACY_UA_COOKIE.test(c.name)
+        : LEGACY_UA_COOKIE.test(c.name) || ANALYTICS_COOKIE.test(c.name)
           ? "analytics"
-          : (vendor?.category ?? (c.party === "first" ? "functional" : "marketing"));
+          : MARKETING_COOKIE.test(c.name)
+            ? "marketing"
+            : (vendor?.category ?? (c.party === "first" ? "functional" : "marketing"));
       const existing = byKey.get(key);
       const beforeConsent = preNames.has(key);
       if (existing) {
@@ -482,6 +489,7 @@ export function buildReport(
   const beforeConsentDomains = collectBeforeConsentDomains(captures);
   const summary = buildSummary(inventory, cookies, captures, privacyScore, beforeConsentDomains);
   const privacyPolicyUrl = captures.map((c) => c.privacyPolicyUrl).find((u): u is string => Boolean(u)) ?? null;
+  const cookiePolicyUrl = captures.map((c) => c.cookiePolicyUrl).find((u): u is string => Boolean(u)) ?? null;
 
   return {
     scan: {
@@ -498,5 +506,6 @@ export function buildReport(
     findings,
     beforeConsentDomains,
     privacyPolicyUrl,
+    cookiePolicyUrl,
   };
 }

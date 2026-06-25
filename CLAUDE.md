@@ -93,7 +93,8 @@ This shape maps directly onto the report sections. Keep field names stable.
     }
   ],
   "beforeConsentDomains": ["google-analytics.com", "googletagmanager.com"],  // site-wide registrable domains before consent (backs summary.domainsBeforeConsent)
-  "privacyPolicyUrl": "https://www.example.com/privacy-policy"               // detected policy link, or null
+  "privacyPolicyUrl": "https://www.example.com/privacy-policy",              // detected privacy policy link, or null
+  "cookiePolicyUrl": null                                                    // detected cookie policy link, or null
 }
 ```
 
