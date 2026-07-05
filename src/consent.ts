@@ -298,6 +298,42 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
         }
       }
 
+      // Fallback: bespoke/theme-coded banners that don't self-label in markup — the consent
+      // keywords live only in the visible TEXT (e.g. <div class="fixed bottom-0">"This website
+      // uses cookies… Accept / Reject"). To stay false-positive-safe we require ALL of: a short,
+      // visible container whose text mentions cookies/consent AND that itself exposes an
+      // accept-like control. The shortest-text qualifying element is the tightest banner wrapper,
+      // which also scopes control classification correctly.
+      if (!banner) {
+        const controlLabels = (el: Element): string[] =>
+          Array.from(el.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]'))
+            .filter((ctrl) => isVisible(ctrl))
+            .map((ctrl) => (ctrl.textContent || (ctrl as HTMLInputElement).value || "").trim())
+            .filter(Boolean);
+        let bestScore = 0;
+        let bestLen = Infinity;
+        for (const el of Array.from(document.querySelectorAll("div,section,aside,dialog,form"))) {
+          if (!isVisible(el)) continue;
+          const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (text.length < 12 || text.length > 800) continue; // banners are short blurbs
+          if (!CONTAINER_HINT.test(text)) continue;
+          const labels = controlLabels(el);
+          if (!labels.some((t) => ACCEPT.test(t))) continue; // must expose an accept-like control
+          // Prefer the container exposing the most consent-control types (accept/reject/settings),
+          // so we capture the whole button group rather than a wrapper around a single button.
+          // Tie-break on shortest text = the tightest banner region.
+          const score =
+            (labels.some((t) => ACCEPT.test(t)) ? 1 : 0) +
+            (labels.some((t) => REJECT.test(t)) ? 1 : 0) +
+            (labels.some((t) => SETTINGS.test(t)) ? 1 : 0);
+          if (score > bestScore || (score === bestScore && text.length < bestLen)) {
+            bestScore = score;
+            bestLen = text.length;
+            banner = el;
+          }
+        }
+      }
+
       // Classify controls ONLY within the consent container, by label/role.
       let acceptAll = false;
       let rejectAll = false;

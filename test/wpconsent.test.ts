@@ -53,6 +53,32 @@ const PRESSIDIUM_FIXTURE = `<!doctype html><html><head>
   <button>Accept necessary</button>
 </div></body></html>`;
 
+// Bespoke, theme-coded banner (no CMP, no cookie/consent keyword in class/id/aria) — the
+// consent keywords live only in the visible TEXT. Modeled on zailaboratory.com's custom
+// Tailwind banner. Must be caught by the text-based fallback.
+const BESPOKE_TEXT_BANNER_FIXTURE = `<!doctype html><html><body>
+<main><h1>Home</h1><p>Welcome to our site.</p></main>
+<div class="border-t fixed w-full bottom-0 left-0 bg-white py-16 z-[100]">
+  <div class="container mx-auto">
+    <div class="lg:flex lg:space-x-16 justify-between items-start">
+      <button aria-label="close">&times;</button>
+      <p>This website uses cookies to ensure the best possible functionality and user experience.
+         To consent to our use of cookies please click "Accept Cookies."</p>
+      <div class="flex space-x-4">
+        <button>Accept Cookies</button>
+        <button>Reject Cookies</button>
+      </div>
+    </div>
+  </div>
+</div></body></html>`;
+
+// A page with a cookie-policy paragraph in the footer but NO banner and NO accept control —
+// the text fallback must NOT treat prose + an unrelated link as a consent banner.
+const COOKIE_PROSE_NO_CONTROL_FIXTURE = `<!doctype html><html><body>
+<main><h1>Cookie Policy</h1>
+<p>This website uses cookies to improve your experience. Read more about how we use cookies.</p>
+<a href="/learn-more">Learn more</a></main></body></html>`;
+
 // A OneTrust banner — guards against regressing existing CMP detection.
 const ONETRUST_FIXTURE = `<!doctype html><html><head>
 <script>window.OneTrust = {};</script></head><body>
@@ -121,6 +147,21 @@ describe("WPConsent CMP detection", () => {
     assert.equal(ui.acceptAll, true, "accept-all recognized");
     assert.equal(ui.rejectAll, true, '"Accept necessary" recognized as reject');
     assert.equal(ui.settings, true, '"Cookie Settings" recognized');
+  });
+
+  test("detects a bespoke text-only banner (no CMP, keyword only in body text)", async () => {
+    const ui = await uiFor(BESPOKE_TEXT_BANNER_FIXTURE);
+    assert.equal(ui.bannerPresent, true, "banner present via text fallback");
+    assert.equal(ui.cmpIdentified, null, "no named CMP (it's custom)");
+    assert.equal(ui.acceptAll, true, '"Accept Cookies" recognized');
+    assert.equal(ui.rejectAll, true, '"Reject Cookies" recognized (whole button group captured)');
+    assert.equal(ui.settings, false, "no settings/preferences control");
+  });
+
+  test("does NOT treat cookie-policy prose without an accept control as a banner", async () => {
+    const ui = await uiFor(COOKIE_PROSE_NO_CONTROL_FIXTURE);
+    assert.equal(ui.bannerPresent, false, "prose + 'Learn more' is not a consent banner");
+    assert.equal(ui.cmpIdentified, null);
   });
 
   test("still detects an existing CMP (OneTrust)", async () => {
