@@ -285,24 +285,31 @@ async function detectConsentMode(page: Page): Promise<ConsentModeSignals> {
 }
 
 /** Find linked privacy and cookie policies on the page (for the §5 policy-alignment finding). */
-async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl: string | null; cookiePolicyUrl: string | null }> {
+export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl: string | null; cookiePolicyUrl: string | null }> {
   try {
     return await page.evaluate(() => {
       const cookieLabel = /cookie[\s-]?(policy|notice|statement|preferences?)/i;
       const cookieHref = /cookie-?(policy|notice)/i;
       const privacyLabel = /privacy[\s-]?(policy|notice|statement)|data\s?protection|datenschutz/i;
       const privacyHref = /privacy|datenschutz/i;
+      // Fallback: policy hubs not literally labelled "privacy" that conventionally hold the
+      // privacy statement (e.g. "Website Policies" -> /website-policies/, "Legal"). Used only
+      // when no explicit privacy link is found. Kept conservative (no bare "terms"/"policies").
+      const genericPolicyLabel = /\b(website|site)\s+polic(y|ies)\b|\blegal(\s+(notice|information))?\b/i;
+      const genericPolicyHref = /(website|site)-?polic(y|ies)|\/legal(?:[/#?-]|$)/i;
       let privacy: string | null = null;
       let cookie: string | null = null;
+      let genericPolicy: string | null = null;
       for (const a of Array.from(document.querySelectorAll("a[href]"))) {
         const text = (a.textContent || "").trim();
         const href = (a as HTMLAnchorElement).href;
         if (href.startsWith("javascript:")) continue;
         if (!cookie && (cookieLabel.test(text) || cookieHref.test(href))) cookie = href;
         else if (!privacy && (privacyLabel.test(text) || privacyHref.test(href))) privacy = href;
+        else if (!genericPolicy && (genericPolicyLabel.test(text) || genericPolicyHref.test(href))) genericPolicy = href;
         if (privacy && cookie) break;
       }
-      return { privacyPolicyUrl: privacy, cookiePolicyUrl: cookie };
+      return { privacyPolicyUrl: privacy ?? genericPolicy, cookiePolicyUrl: cookie };
     });
   } catch {
     return { privacyPolicyUrl: null, cookiePolicyUrl: null };

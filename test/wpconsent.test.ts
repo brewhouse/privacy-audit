@@ -5,6 +5,7 @@ import { type Browser, chromium, type Page } from "playwright";
 // esbuild output (esbuild's keepNames injects a __name helper that is undefined in the
 // page context). Run `npm run build` first — `npm test` does this automatically.
 import { buildReport } from "../dist/aggregate.js";
+import { detectPolicyLinks } from "../dist/capture.js";
 import { detectConsentUi } from "../dist/consent.js";
 import type { CapturePass, PageCapture } from "../dist/types.js";
 
@@ -216,5 +217,49 @@ describe("WPConsent CMP detection", () => {
     const wpc = report.cookies.find((c) => c.name === "wpconsent_geolocation");
     assert.equal(wpc?.category, "necessary", "consent-platform cookie categorized necessary");
     assert.equal(report.summary.cookiesBeforeConsent, 1, "only the non-necessary cookie is counted");
+  });
+
+  // Policy-link detection — a privacy policy is often linked under a generic label.
+  async function policiesFor(html: string) {
+    const page: Page = await browser.newPage();
+    try {
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
+      return await detectPolicyLinks(page);
+    } finally {
+      await page.close();
+    }
+  }
+
+  test("detects a privacy policy linked under a generic 'Website Policies' label", async () => {
+    // Modeled on cpedv.org: the privacy statement lives at /website-policies/, linked as
+    // "Website Policies" — no "privacy" in the anchor text or href.
+    const p = await policiesFor(
+      `<!doctype html><html><body><footer>
+        <a href="https://ex.test/website-policies/">Website Policies</a>
+        <a href="https://ex.test/contact/">Contact</a>
+      </footer></body></html>`,
+    );
+    assert.equal(p.privacyPolicyUrl, "https://ex.test/website-policies/", "generic policy hub found as privacy policy");
+    assert.equal(p.cookiePolicyUrl, null, "no cookie-specific policy present");
+  });
+
+  test("prefers an explicit privacy link over a generic policy hub", async () => {
+    const p = await policiesFor(
+      `<!doctype html><html><body><footer>
+        <a href="https://ex.test/legal/">Legal</a>
+        <a href="https://ex.test/privacy-policy/">Privacy Policy</a>
+      </footer></body></html>`,
+    );
+    assert.equal(p.privacyPolicyUrl, "https://ex.test/privacy-policy/", "explicit privacy link wins");
+  });
+
+  test("does not treat a bare Terms link as a privacy policy", async () => {
+    const p = await policiesFor(
+      `<!doctype html><html><body><footer>
+        <a href="https://ex.test/terms/">Terms of Service</a>
+        <a href="https://ex.test/about/">About</a>
+      </footer></body></html>`,
+    );
+    assert.equal(p.privacyPolicyUrl, null, "terms-only site has no detected privacy policy");
   });
 });
