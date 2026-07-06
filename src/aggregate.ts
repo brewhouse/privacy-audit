@@ -1,6 +1,9 @@
 import { lookupVendor } from "./vendor-map.js";
 import type {
   AuditReport,
+  CapturedCookie,
+  CapturedRequest,
+  CapturedScript,
   Category,
   ConsentMechanism,
   ConsentModeState,
@@ -474,12 +477,59 @@ function addLegacyUaService(inventory: InventoryItem[], captures: PageCapture[])
   });
 }
 
+function dedupeBy<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const k = key(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * When NO consent mechanism is detected site-wide, the before/after-consent split is
+ * meaningless — nothing gates anything, so every cookie/request observed in ANY pass fired
+ * without consent. But the pre-consent snapshot is a bounded settle window (see capture.ts
+ * SETTLE_MS), so late-arriving ad-tech cookie-sync cookies land in the later passes and
+ * would be undercounted as "before consent". On a bannerless site, fold the later passes'
+ * observations into preConsent (deduped) so before-consent counts reflect the true
+ * uncontrolled exposure. Later passes are left intact so the decline-path finding still
+ * reads them. No-op when any banner/CMP is present — there the split is the whole point.
+ */
+function unifyPassesWhenUngated(captures: PageCapture[]): PageCapture[] {
+  if (captures.some((c) => c.consentUi.bannerPresent)) return captures;
+  const reqKey = (r: CapturedRequest) => r.url;
+  const cookieKey = (c: CapturedCookie) => `${c.name}@${c.domain}`;
+  const scriptKey = (s: CapturedScript) => (s.src ? `src:${s.src}` : `inline:${s.injectionHint}`);
+  return captures.map((cap) => ({
+    ...cap,
+    preConsent: {
+      requests: dedupeBy(
+        [...cap.preConsent.requests, ...cap.afterAccept.requests, ...cap.afterReject.requests],
+        reqKey,
+      ),
+      cookies: dedupeBy(
+        [...cap.preConsent.cookies, ...cap.afterAccept.cookies, ...cap.afterReject.cookies],
+        cookieKey,
+      ),
+      scripts: dedupeBy(
+        [...cap.preConsent.scripts, ...cap.afterAccept.scripts, ...cap.afterReject.scripts],
+        scriptKey,
+      ),
+    },
+  }));
+}
+
 /** Top-level: assemble the full AuditReport from per-page captures. */
 export function buildReport(
   domain: string,
-  captures: PageCapture[],
+  rawCaptures: PageCapture[],
   method: string,
 ): AuditReport {
+  const captures = unifyPassesWhenUngated(rawCaptures);
   const inventory = buildInventory(captures);
   addLegacyUaService(inventory, captures);
   const cookies = buildCookies(captures);

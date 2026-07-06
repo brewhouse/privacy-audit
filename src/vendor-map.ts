@@ -88,6 +88,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "addthis.com": { vendor: "Oracle", name: "AddThis", category: "marketing" },
   "clickcease.com": { vendor: "ClickCease", name: "ClickCease", category: "marketing" },
   "reachlocalservices.com": { vendor: "ReachLocal", name: "ReachLocal", category: "marketing" },
+  "rlets.com": { vendor: "LocaliQ (ReachLocal)", name: "ReachLocal / LocaliQ retargeting", category: "marketing" },
+  "localiq.com": { vendor: "LocaliQ", name: "LocaliQ", category: "marketing" },
   "merchant-center-analytics.goog": { vendor: "Google", name: "Google Merchant Center", category: "marketing" },
   "imrworldwide.com": { vendor: "Nielsen", name: "Nielsen Measurement", category: "marketing" },
 

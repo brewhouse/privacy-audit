@@ -7,6 +7,7 @@ import { type Browser, chromium, type Page } from "playwright";
 import { buildReport } from "../dist/aggregate.js";
 import { detectPolicyLinks } from "../dist/capture.js";
 import { detectConsentUi } from "../dist/consent.js";
+import { lookupVendor } from "../dist/vendor-map.js";
 import type { CapturePass, PageCapture } from "../dist/types.js";
 
 /**
@@ -217,6 +218,54 @@ describe("WPConsent CMP detection", () => {
     const wpc = report.cookies.find((c) => c.name === "wpconsent_geolocation");
     assert.equal(wpc?.category, "necessary", "consent-platform cookie categorized necessary");
     assert.equal(report.summary.cookiesBeforeConsent, 1, "only the non-necessary cookie is counted");
+  });
+
+  test("no-banner site: late-arriving cookies/requests count as before-consent (union of passes)", () => {
+    // No consent mechanism at all. The pre-consent snapshot missed the ad-tech cookie-sync
+    // cascade, which landed in the later passes. With no gate, those fired without consent
+    // and must be counted before-consent.
+    const cap = captureWith({ bannerPresent: false, acceptAll: false, rejectAll: false, settings: false, cmpIdentified: null });
+    cap.preConsent = {
+      requests: [{ url: "https://www.google-analytics.com/g/collect?v=2", domain: "www.google-analytics.com", resourceType: "image", isThirdParty: true, isFont: false }],
+      cookies: [{ name: "_ga", domain: "example.com", party: "first", expiry: null }],
+      scripts: [],
+    };
+    cap.afterAccept = {
+      requests: [{ url: "https://adnxs.com/sync", domain: "adnxs.com", resourceType: "image", isThirdParty: true, isFont: false }],
+      cookies: [{ name: "uuid2", domain: "adnxs.com", party: "third", expiry: null }],
+      scripts: [],
+    };
+    cap.afterReject = {
+      requests: [{ url: "https://casalemedia.com/sync", domain: "casalemedia.com", resourceType: "image", isThirdParty: true, isFont: false }],
+      cookies: [{ name: "CMID", domain: "casalemedia.com", party: "third", expiry: null }],
+      scripts: [],
+    };
+    const report = buildReport("https://example.com/", [cap], "test");
+    const before = report.cookies.filter((c) => c.beforeConsent).map((c) => c.name);
+    assert.ok(before.includes("uuid2"), "afterAccept sync cookie counted before consent");
+    assert.ok(before.includes("CMID"), "afterReject sync cookie counted before consent");
+    assert.equal(report.summary.cookiesBeforeConsent, 3, "_ga + uuid2 + CMID all pre-consent");
+    assert.ok(report.beforeConsentDomains.includes("adnxs.com"), "adnxs contacted before consent");
+    assert.ok(report.beforeConsentDomains.includes("casalemedia.com"), "casalemedia contacted before consent");
+  });
+
+  test("banner present: passes are NOT unified (before/after split preserved)", () => {
+    // The union only applies when there is no consent mechanism. With a banner, a cookie that
+    // appears only after accept must stay after-consent — that split is the whole point.
+    const cap = captureWith({ bannerPresent: true, acceptAll: true, rejectAll: true, settings: true, cmpIdentified: "WPConsent" });
+    cap.afterAccept = {
+      requests: [],
+      cookies: [{ name: "uuid2", domain: "adnxs.com", party: "third", expiry: null }],
+      scripts: [],
+    };
+    const report = buildReport("https://example.com/", [cap], "test");
+    const uuid2 = report.cookies.find((c) => c.name === "uuid2");
+    assert.equal(uuid2?.beforeConsent, false, "post-accept cookie stays after-consent when a banner exists");
+  });
+
+  test("vendor map classifies ReachLocal/LocaliQ retargeting hosts as marketing", () => {
+    assert.equal(lookupVendor("https://2ca5e9c4.rlets.com/track")?.category, "marketing", "rlets.com is marketing");
+    assert.equal(lookupVendor("https://www.localiq.com/pixel")?.category, "marketing", "localiq.com is marketing");
   });
 
   // Policy-link detection — a privacy policy is often linked under a generic label.
