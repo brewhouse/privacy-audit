@@ -268,6 +268,12 @@ describe("WPConsent CMP detection", () => {
     assert.equal(lookupVendor("https://www.localiq.com/pixel")?.category, "marketing", "localiq.com is marketing");
   });
 
+  test("vendor map classifies MyFonts/Monotype as a functional web-font service", () => {
+    const mf = lookupVendor("https://hello.myfonts.net/count/2693fd");
+    assert.equal(mf?.category, "functional", "myfonts.net is functional, not unknown");
+    assert.equal(mf?.vendor, "Monotype");
+  });
+
   // Policy-link detection — a privacy policy is often linked under a generic label.
   async function policiesFor(html: string) {
     const page: Page = await browser.newPage();

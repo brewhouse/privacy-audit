@@ -123,6 +123,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "hcaptcha.com": { vendor: "hCaptcha", name: "hCaptcha", category: "functional" },
   "tripleseat.com": { vendor: "Tripleseat", name: "Tripleseat (event booking)", category: "functional" },
   "icomoon.io": { vendor: "IcoMoon", name: "IcoMoon (icon font)", category: "functional" },
+  "myfonts.net": { vendor: "Monotype", name: "MyFonts (web fonts)", category: "functional" },
+  "fonts.net": { vendor: "Monotype", name: "Monotype Fonts (web fonts)", category: "functional" },
   "typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
   "gstatic.com": { vendor: "Google", name: "Google Static Content", category: "functional" },
   "googlevideo.com": { vendor: "Google", name: "YouTube (video CDN)", category: "functional" },
