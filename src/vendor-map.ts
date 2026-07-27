@@ -106,6 +106,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "userway.org": { vendor: "UserWay", name: "UserWay Accessibility", category: "functional" },
   "accessibilityserver.org": { vendor: "Accessibility Widget", name: "Accessibility Widget", category: "functional" },
   "accessibe.com": { vendor: "accessiBe", name: "accessiBe Accessibility", category: "functional" },
+  "acsbapp.com": { vendor: "accessiBe", name: "accessiBe Accessibility (widget)", category: "functional" },
+  "acsbap.com": { vendor: "accessiBe", name: "accessiBe Accessibility (widget)", category: "functional" },
   "player.vimeo.com": { vendor: "Vimeo", name: "Vimeo Embed", category: "functional" },
   "vimeo.com": { vendor: "Vimeo", name: "Vimeo", category: "functional" },
   "vimeocdn.com": { vendor: "Vimeo", name: "Vimeo (CDN)", category: "functional" },
