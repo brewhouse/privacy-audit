@@ -280,6 +280,18 @@ describe("WPConsent CMP detection", () => {
     assert.equal(a?.vendor, "accessiBe");
   });
 
+  test("vendor map classifies Google Translate widget hosts as functional (not 'unknown')", () => {
+    for (const url of [
+      "https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit",
+      "https://translate.googleapis.com/element/log?format=json",
+      "https://translate-pa.googleapis.com/v1/supportedLanguages?client=te",
+    ]) {
+      const t = lookupVendor(url);
+      assert.equal(t?.category, "functional", `${url} is functional`);
+      assert.equal(t?.name, "Google Translate (widget)");
+    }
+  });
+
   // Policy-link detection — a privacy policy is often linked under a generic label.
   async function policiesFor(html: string) {
     const page: Page = await browser.newPage();

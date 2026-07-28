@@ -40,6 +40,11 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "fonts.gstatic.com": { vendor: "Google", name: "Google Fonts", category: "functional" },
   "ajax.googleapis.com": { vendor: "Google", name: "Google Hosted Libraries (jQuery)", category: "functional" },
   "apis.google.com": { vendor: "Google", name: "Google API (apis.google.com)", category: "functional" },
+  // Google Translate website widget — functional (translate.google.com element.js +
+  // translate.googleapis.com / translate-pa.googleapis.com support calls).
+  "translate.google.com": { vendor: "Google", name: "Google Translate (widget)", category: "functional" },
+  "translate.googleapis.com": { vendor: "Google", name: "Google Translate (widget)", category: "functional" },
+  "translate-pa.googleapis.com": { vendor: "Google", name: "Google Translate (widget)", category: "functional" },
 
   // --- Meta ---
   "connect.facebook.net": { vendor: "Meta", name: "Meta Pixel", category: "marketing" },
