@@ -135,6 +135,8 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
   "gstatic.com": { vendor: "Google", name: "Google Static Content", category: "functional" },
   "googlevideo.com": { vendor: "Google", name: "YouTube (video CDN)", category: "functional" },
+  // Google user-content / YouTube thumbnail hosting — any page with a YouTube embed hits it.
+  "ggpht.com": { vendor: "Google", name: "YouTube / Google user content (images)", category: "functional" },
   "ss-gtm.com": { vendor: "Google", name: "Server-side Google Tag Manager", category: "functional" },
   "use.typekit.net": { vendor: "Adobe", name: "Adobe Fonts (Typekit)", category: "functional" },
   "cdnjs.cloudflare.com": { vendor: "Cloudflare", name: "cdnjs", category: "functional" },

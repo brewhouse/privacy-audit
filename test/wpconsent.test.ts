@@ -280,6 +280,12 @@ describe("WPConsent CMP detection", () => {
     assert.equal(a?.vendor, "accessiBe");
   });
 
+  test("vendor map classifies ggpht.com (YouTube thumbnails) as functional", () => {
+    const g = lookupVendor("https://i.ytimg.ggpht.com/ytc/AIdro_abc=s68-c-k-c0x00ffffff-no-rj");
+    assert.equal(g?.category, "functional", "ggpht.com is functional, not unknown");
+    assert.equal(g?.vendor, "Google");
+  });
+
   test("vendor map classifies Google Translate widget hosts as functional (not 'unknown')", () => {
     for (const url of [
       "https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit",
