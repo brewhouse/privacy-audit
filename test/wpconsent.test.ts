@@ -5,7 +5,7 @@ import { type Browser, chromium, type Page } from "playwright";
 // esbuild output (esbuild's keepNames injects a __name helper that is undefined in the
 // page context). Run `npm run build` first — `npm test` does this automatically.
 import { buildReport } from "../dist/aggregate.js";
-import { detectPolicyLinks } from "../dist/capture.js";
+import { detectConsentMode, detectPolicyLinks } from "../dist/capture.js";
 import { detectConsentUi } from "../dist/consent.js";
 import { lookupVendor } from "../dist/vendor-map.js";
 import type { CapturePass, PageCapture } from "../dist/types.js";
@@ -278,6 +278,48 @@ describe("WPConsent CMP detection", () => {
     const a = lookupVendor("https://cdn.acsbapp.com/config/example.org/config.json");
     assert.equal(a?.category, "functional", "acsbapp.com is functional, not unknown");
     assert.equal(a?.vendor, "accessiBe");
+  });
+
+  // Consent Mode v2 default-state detection. gtag() pushes its `arguments` object into
+  // dataLayer — array-LIKE but not a real Array — so an Array.isArray() guard silently
+  // missed every consent default and reported correctly-gated sites as un-gated.
+  async function consentModeFor(body: string) {
+    const page: Page = await browser.newPage();
+    try {
+      await page.setContent(`<!doctype html><html><head><script>
+        window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}
+        ${body}
+      </script></head><body><p>page</p></body></html>`, { waitUntil: "domcontentloaded" });
+      return await detectConsentMode(page);
+    } finally {
+      await page.close();
+    }
+  }
+
+  test("reads a denied Consent Mode default pushed via gtag() arguments", async () => {
+    const cm = await consentModeFor(`
+      gtag('consent','default',{ad_storage:'denied',analytics_storage:'denied',
+        ad_user_data:'denied',ad_personalization:'denied',wait_for_update:500});
+      gtag('js', new Date()); gtag('config','G-TEST');`);
+    assert.equal(cm.present, true, "consent signals present");
+    assert.equal(cm.defaultDenied, true, "denied default detected through the arguments object");
+    assert.equal(cm.defaultGranted, false, "no granted default");
+  });
+
+  test("a granted default is still reported as not-denied (ungated)", async () => {
+    const cm = await consentModeFor(`gtag('consent','default',{analytics_storage:'granted'});`);
+    assert.equal(cm.present, true);
+    assert.equal(cm.defaultDenied, false, "granted default must not read as denied");
+    assert.equal(cm.defaultGranted, true);
+  });
+
+  test("a post-consent 'update' grant is not mistaken for the default state", async () => {
+    // Default denied, then granted on consent — the DEFAULT is what gates pre-consent.
+    const cm = await consentModeFor(`
+      gtag('consent','default',{analytics_storage:'denied'});
+      gtag('consent','update',{analytics_storage:'granted'});`);
+    assert.equal(cm.defaultDenied, true, "default denied still recognized");
+    assert.equal(cm.defaultGranted, false, "the 'update' grant is not read as a default");
   });
 
   test("vendor map classifies ggpht.com (YouTube thumbnails) as functional", () => {

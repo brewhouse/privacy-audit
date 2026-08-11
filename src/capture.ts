@@ -258,22 +258,34 @@ async function readScripts(page: Page): Promise<CapturedScript[]> {
  * Detect Google Consent Mode v2 signals and the default state (CLAUDE.md §4.3, §6).
  * Presence ≠ gated: we record whether any default was set to "denied" vs "granted".
  */
-async function detectConsentMode(page: Page): Promise<ConsentModeSignals> {
+export async function detectConsentMode(page: Page): Promise<ConsentModeSignals> {
   try {
     return await page.evaluate(() => {
       const dl: any[] = (window as any).dataLayer || [];
       let present = false;
       let defaultDenied = false;
       let defaultGranted = false;
-      for (const entry of dl) {
-        // gtag('consent', 'default'|'update', {...}) lands in dataLayer as an arguments array.
-        if (Array.isArray(entry) && entry[0] === "consent") {
-          present = true;
-          const params = entry[2] || {};
-          for (const v of Object.values(params)) {
-            if (v === "denied") defaultDenied = true;
-            if (v === "granted") defaultGranted = true;
-          }
+
+      // gtag('consent', ...) pushes the function's `arguments` object — array-LIKE but not a
+      // real Array, so Array.isArray() is false for it. Normalize both shapes or every
+      // consent default is missed (and the site looks un-gated when it is not).
+      const toArgs = (e: any): any[] | null => {
+        if (Array.isArray(e)) return e;
+        if (e && typeof e === "object" && typeof e.length === "number") return Array.prototype.slice.call(e);
+        return null;
+      };
+
+      for (const raw of dl) {
+        const entry = toArgs(raw);
+        if (!entry || entry[0] !== "consent") continue;
+        present = true;
+        // Only the DEFAULT state answers "are tags gated before consent?" — an 'update'
+        // call is the post-choice grant and must not be read as the default (§6).
+        if (entry[1] !== "default") continue;
+        const params = entry[2] || {};
+        for (const v of Object.values(params)) {
+          if (v === "denied") defaultDenied = true;
+          if (v === "granted") defaultGranted = true;
         }
       }
       if ((window as any).google_tag_data?.ics) present = true;
