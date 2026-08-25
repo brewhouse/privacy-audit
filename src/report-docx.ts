@@ -20,7 +20,9 @@ import {
 import type {
   AuditReport,
   Finding,
+  RiskLevel,
   RuntimeEvent,
+  SectionCounts,
   Severity,
 } from "./types.js";
 
@@ -48,7 +50,16 @@ const GREY = "BFBFBF";
 
 const CONTENT_WIDTH = 9360; // US Letter, 1" margins
 
-const ROW_CAP = 40; // cap long runtime lists in the doc; full data lives in report.json/HAR
+/**
+ * Row caps.
+ *
+ * The inventory and cookie tables ARE the deliverable — a client cannot open report.json,
+ * so truncating them at 40 rows ("…and 7 more") hid evidence the report exists to present.
+ * They are now effectively uncapped. Runtime request logs stay capped: they run to
+ * hundreds of near-identical rows per page and the HAR is the real record.
+ */
+const ROW_CAP = 40; // runtime event lists
+const TABLE_CAP = 500; // inventory / cookie / page tables — high enough to never truncate in practice
 
 export interface DocxOptions {
   clientName?: string;
@@ -63,6 +74,23 @@ function riskLevel(score: number): { label: string; fill: string } {
   if (score <= 40) return { label: "Elevated", fill: RED_FILL };
   if (score <= 70) return { label: "Moderate", fill: YELLOW_FILL };
   return { label: "Low", fill: GREEN_FILL };
+}
+
+const RISK_LABEL: Record<RiskLevel, string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  none: "—",
+};
+
+/** Per-item risk grade shading, matching the finding severity palette. */
+function riskFill(risk: RiskLevel): string | undefined {
+  return risk === "high" ? RED_FILL : risk === "medium" ? YELLOW_FILL : risk === "low" ? "EEF3F8" : undefined;
+}
+
+/** "54 total · 13 before consent · 41 after consent only" */
+function countsLine(label: string, c: SectionCounts): string {
+  return `${label}: ${c.total} total · ${c.beforeConsent} before consent · ${c.afterConsentOnly} after consent only.`;
 }
 
 function severityFill(sev: Severity): string {
@@ -235,7 +263,19 @@ function executiveSummary(report: AuditReport): (Paragraph | Table)[] {
       ["Distinct third-party domains before consent", String(s.domainsBeforeConsent)],
       ["Third-party fonts", String(s.thirdPartyFonts)],
       ["Pages scanned", String(report.scan.pagesScanned.length)],
+      ...((report.pageRisks ?? []).length > 1
+        ? ([["Worst page", `${report.pageRisks[0].path} — ${report.pageRisks[0].score} / 100`, riskLevel(report.pageRisks[0].score).fill]] as Array<[string, string, string?]>)
+        : []),
+      [
+        "US opt-out link (CCPA/CPRA)",
+        report.usOptOutLinkUrl ? "Present" : "Not found",
+        report.usOptOutLinkUrl ? GREEN_FILL : RED_FILL,
+      ],
     ]),
+    para(
+      `${countsLine("Third-party services", s.breakdown.services)} ${countsLine("Cookies", s.breakdown.cookies)} ${countsLine("Third-party domains", s.breakdown.domains)}`,
+      { italics: true, color: "666666", size: 18 },
+    ),
   ];
   if ((report.beforeConsentDomains ?? []).length) {
     out.push(
@@ -260,6 +300,10 @@ function executiveSummary(report: AuditReport): (Paragraph | Table)[] {
     );
   }
   return out;
+}
+
+function riskRank(r: RiskLevel): number {
+  return r === "high" ? 3 : r === "medium" ? 2 : r === "low" ? 1 : 0;
 }
 
 function severityRank(s: Severity): number {
@@ -294,21 +338,28 @@ function scopeAndMethod(report: AuditReport): (Paragraph | Table)[] {
 }
 
 function inventorySection(report: AuditReport): (Paragraph | Table)[] {
-  const widths = [2000, 1300, 1700, 1360, 1000, 2000];
-  const rows = report.inventory.map((it) => [
+  const widths = [1850, 1200, 1550, 1160, 900, 900, 1800];
+  // Worst first: a reader scanning the table should meet the high-risk rows before the CDNs.
+  const inventory = [...report.inventory].sort(
+    (a, b) => riskRank(b.risk) - riskRank(a.risk) || a.technology.localeCompare(b.technology),
+  );
+  const rows = inventory.slice(0, TABLE_CAP).map((it) => [
     cell(it.technology, widths[0]),
     cell(it.vendor, widths[1]),
     cell(it.purpose, widths[2]),
     cell(it.category, widths[3]),
     cell(yesNo(it.firesBeforeConsent), widths[4], { fill: it.firesBeforeConsent ? RED_FILL : GREEN_FILL, align: AlignmentType.CENTER }),
-    cell(it.pages.join(", "), widths[5]),
+    cell(RISK_LABEL[it.risk], widths[5], { fill: riskFill(it.risk), align: AlignmentType.CENTER, bold: it.risk === "high" }),
+    cell(it.pages.join(", "), widths[6]),
   ]);
   const out: (Paragraph | Table)[] = [
     h1("2. Tracking Technology Inventory"),
     para(`${report.inventory.length} third-party service(s) were identified and classified by vendor and purpose.`),
+    para(countsLine("Third-party services", report.summary.breakdown.services), { italics: true, color: "666666", size: 18 }),
   ];
   if (rows.length) {
-    out.push(dataTable(["Tool", "Vendor", "Purpose", "Category", "Before consent", "Pages"], widths, rows));
+    out.push(dataTable(["Tool", "Vendor", "Purpose", "Category", "Before consent", "Risk", "Pages"], widths, rows));
+    if (inventory.length > TABLE_CAP) out.push(para(`…and ${inventory.length - TABLE_CAP} more (see report.json).`, { italics: true }));
     out.push(
       para(
         `“Before consent” marks every service that loads before a consent choice. The summary’s “trackers before consent” (${report.summary.trackersBeforeConsent}) counts only the analytics / marketing / non-essential subset — the categories that count as a privacy concern — which is why it is lower than the number of rows here.`,
@@ -319,39 +370,66 @@ function inventorySection(report: AuditReport): (Paragraph | Table)[] {
     out.push(para("No third-party services were detected.", { italics: true }));
   }
 
-  // 2.1 Cookies — name, domain, party, before-consent, category, expiry.
-  out.push(h2("2.1 Cookies observed"));
+  // 2.1 / 2.2 Cookies, split by party.
+  //
+  // First-party and third-party cookies answer different questions — third-party cookies
+  // are the cross-site tracking surface, first-party ones are what the site itself (or a
+  // vendor script writing on its domain) stores — so they get their own tables and their
+  // own counts rather than one mixed list behind a "Party" column.
   const cookies = report.cookies ?? [];
+  const bd = report.summary.breakdown;
+  out.push(
+    ...cookieTable("2.1 First-party cookies", cookies.filter((c) => c.party === "first"), bd.firstPartyCookies,
+      "Cookies set on the site's own domain. Only strictly-necessary cookies should be set before a consent choice."),
+    ...cookieTable("2.2 Third-party cookies", cookies.filter((c) => c.party === "third"), bd.thirdPartyCookies,
+      "Cookies set by external domains. These are the cross-site tracking surface and generally require consent."),
+  );
   if (cookies.length) {
-    const cw = [2200, 1900, 900, 1100, 1360, 1900];
-    const fmtExpiry = (e: string | null): string => {
-      if (!e) return "Session";
-      const d = new Date(e);
-      return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-    };
-    const crows = cookies.slice(0, ROW_CAP).map((c) => {
-      const flagged = c.beforeConsent && c.category !== "necessary";
-      return [
-        cell(c.name, cw[0]),
-        cell(c.domain, cw[1]),
-        cell(c.party, cw[2]),
-        cell(yesNo(c.beforeConsent), cw[3], { fill: flagged ? RED_FILL : GREEN_FILL, align: AlignmentType.CENTER }),
-        cell(c.category, cw[4]),
-        cell(fmtExpiry(c.expiry), cw[5]),
-      ];
-    });
-    out.push(dataTable(["Cookie", "Domain", "Party", "Before consent", "Category", "Expiry"], cw, crows));
-    if (cookies.length > ROW_CAP) out.push(para(`…and ${cookies.length - ROW_CAP} more (see report.json).`, { italics: true }));
-    const before = cookies.filter((c) => c.beforeConsent && c.category !== "necessary").length;
     out.push(
       para(
-        `${cookies.length} cookie(s) observed; ${before} non-essential cookie(s) set before consent. Expiry dates are when each cookie is set to persist.`,
+        `${cookies.length} cookie(s) observed in total; ${bd.cookies.beforeConsent} non-essential cookie(s) set before consent. Expiry dates are when each cookie is set to persist.`,
         { italics: true, color: "666666", size: 18 },
       ),
     );
-  } else {
-    out.push(para("No cookies were observed on the pages tested.", { italics: true }));
   }
+  return out;
+}
+
+/** One cookie table (first- or third-party) with its own total/before/after counts. */
+function cookieTable(
+  heading: string,
+  cookies: AuditReport["cookies"],
+  sectionCounts: SectionCounts,
+  blurb: string,
+): (Paragraph | Table)[] {
+  const out: (Paragraph | Table)[] = [h2(heading), para(blurb, { italics: true, color: "666666", size: 18 })];
+  if (!cookies.length) {
+    out.push(para("None observed.", { italics: true }));
+    return out;
+  }
+  const cw = [2000, 1760, 1100, 900, 1300, 2300];
+  const fmtExpiry = (e: string | null): string => {
+    if (!e) return "Session";
+    const d = new Date(e);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  };
+  const sorted = [...cookies].sort(
+    (a, b) => riskRank(b.risk) - riskRank(a.risk) || a.name.localeCompare(b.name),
+  );
+  const rows = sorted.slice(0, TABLE_CAP).map((c) => {
+    const flagged = c.beforeConsent && c.category !== "necessary";
+    return [
+      cell(c.name, cw[0]),
+      cell(c.domain, cw[1]),
+      cell(yesNo(c.beforeConsent), cw[2], { fill: flagged ? RED_FILL : GREEN_FILL, align: AlignmentType.CENTER }),
+      cell(RISK_LABEL[c.risk], cw[3], { fill: riskFill(c.risk), align: AlignmentType.CENTER, bold: c.risk === "high" }),
+      cell(c.category, cw[4]),
+      cell(fmtExpiry(c.expiry), cw[5]),
+    ];
+  });
+  out.push(dataTable(["Cookie", "Domain", "Before consent", "Risk", "Category", "Expiry"], cw, rows));
+  if (sorted.length > TABLE_CAP) out.push(para(`…and ${sorted.length - TABLE_CAP} more (see report.json).`, { italics: true }));
+  out.push(para(countsLine("Non-essential", sectionCounts), { italics: true, color: "666666", size: 18 }));
   return out;
 }
 
@@ -367,7 +445,20 @@ function consentSection(report: AuditReport): (Paragraph | Table)[] {
       ["Blocks non-essential scripts before consent", yesNo(c.blocksBeforeConsent), c.blocksBeforeConsent ? GREEN_FILL : RED_FILL],
       ["CMP identified", c.cmpIdentified ?? "Not identified"],
       ["Google Consent Mode v2", c.consentModeV2],
-      ["GPC honored", c.gpcHonored === null ? "Not tested" : yesNo(c.gpcHonored)],
+      [
+        "Global Privacy Control honored",
+        !c.gpcTested
+          ? "Not tested"
+          : c.gpcHonored === null
+            ? "Inconclusive — no non-essential trackers to suppress"
+            : yesNo(c.gpcHonored),
+        c.gpcTested && c.gpcHonored === false ? RED_FILL : c.gpcHonored ? GREEN_FILL : undefined,
+      ],
+      [
+        "US opt-out link (“Do Not Sell or Share” / “Your Privacy Choices”)",
+        report.usOptOutLinkUrl ?? "Not found",
+        report.usOptOutLinkUrl ? GREEN_FILL : RED_FILL,
+      ],
     ]),
     para(
       c.bannerPresent && !c.blocksBeforeConsent
@@ -379,6 +470,16 @@ function consentSection(report: AuditReport): (Paragraph | Table)[] {
     ),
     para(
       "Note: Consent Mode v2 being present does not mean tags are gated — the default state matters. A “present” status here indicates signals were detected without a “denied” default.",
+      { italics: true, color: "666666", size: 18 },
+    ),
+    para(
+      c.gpcTested
+        ? "Global Privacy Control was tested by re-loading the page in a fresh context sending Sec-GPC: 1 and exposing navigator.globalPrivacyControl, then comparing which non-essential trackers still fired."
+        : "Global Privacy Control was not tested in this run.",
+      { italics: true, color: "666666", size: 18 },
+    ),
+    para(
+      "The US opt-out link is the control that California’s CCPA/CPRA and comparable state laws expect where personal information is sold or shared for cross-context behavioral advertising. Its presence or absence is reported as an observation; whether the statutes apply to this organization is a question for counsel.",
       { italics: true, color: "666666", size: 18 },
     ),
     para(
@@ -404,6 +505,39 @@ function runtimeEventTable(events: RuntimeEvent[], fill?: string): Table | Parag
   return dataTable(["Type", "Name", "Destination"], widths, rows);
 }
 
+/**
+ * When each identified tracker first fired, in milliseconds after navigation start.
+ *
+ * "Fires before consent" is a yes/no; the timing is what shows how immediate the exposure
+ * is — a pixel at 200ms fired before a visitor could plausibly have read anything, which
+ * is a stronger statement than the flag alone. Times come from the same request stream the
+ * HAR is built from, so they are backed by preserved evidence.
+ */
+function consentTimeline(report: AuditReport): (Paragraph | Table)[] {
+  const timed = report.inventory
+    .filter((i) => i.firesBeforeConsent && typeof i.firstSeenMs === "number" && i.category !== "necessary")
+    .sort((a, b) => (a.firstSeenMs ?? 0) - (b.firstSeenMs ?? 0));
+  if (!timed.length) return [];
+
+  const widths = [3400, 1400, 1400, 3160];
+  const rows = timed.slice(0, ROW_CAP).map((i) => [
+    cell(i.technology, widths[0]),
+    cell(`${i.firstSeenMs} ms`, widths[1], { align: AlignmentType.RIGHT }),
+    cell(RISK_LABEL[i.risk], widths[2], { fill: riskFill(i.risk), align: AlignmentType.CENTER, bold: i.risk === "high" }),
+    cell(i.purpose, widths[3]),
+  ]);
+  const out: (Paragraph | Table)[] = [
+    h2("4.0 Consent timeline — what fired, and how fast"),
+    para(
+      "Time from navigation start to each service's first request on the representative page, before any consent choice.",
+      { italics: true, color: "666666", size: 18 },
+    ),
+    dataTable(["Service", "First seen", "Risk", "Purpose"], widths, rows),
+  ];
+  if (timed.length > ROW_CAP) out.push(para(`…and ${timed.length - ROW_CAP} more (see report.json).`, { italics: true }));
+  return out;
+}
+
 function runtimeSection(report: AuditReport): (Paragraph | Table)[] {
   const r = report.runtime;
   const rep = report.scan.pagesScanned[0] ?? "the representative page";
@@ -413,6 +547,7 @@ function runtimeSection(report: AuditReport): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [
     h1("4. Runtime Behavior Findings"),
     para(`Runtime events below are for the representative page (${rep}). Site-wide aggregation is in Sections 2 and 6.`, { italics: true, color: "666666", size: 18 }),
+    ...consentTimeline(report),
     h2("4.1 Before consent (on page load, no interaction)"),
     runtimeEventTable(r.beforeConsent, RED_FILL),
   ];
@@ -442,6 +577,12 @@ function policyAlignmentSection(report: AuditReport): (Paragraph | Table)[] {
     report.cookiePolicyUrl
       ? para(`Cookie policy: found — ${report.cookiePolicyUrl}`, { bold: true })
       : para("Cookie policy: not found on the pages scanned — a dedicated cookie policy listing the cookies in use is recommended.", { bold: true, color: "7a1f1f" }),
+    report.usOptOutLinkUrl
+      ? para(`US opt-out link: found — ${report.usOptOutLinkUrl}`, { bold: true })
+      : para(
+          "US opt-out link: not found on the pages scanned — no “Do Not Sell or Share My Personal Information” or “Your Privacy Choices” control was present.",
+          { bold: true, color: "7a1f1f" },
+        ),
   );
   out.push(
     para(
@@ -471,6 +612,49 @@ function riskFindingsSection(report: AuditReport): (Paragraph | Table)[] {
   ]);
   out.push(dataTable(["Severity", "Finding", "Detail"], widths, rows));
   out.push(para("Severity reflects technical exposure observed at runtime, not a legal determination.", { italics: true, color: "666666", size: 18 }));
+  out.push(...pageRankingSection(report));
+  return out;
+}
+
+/**
+ * Per-page scores, worst-first.
+ *
+ * A single site-wide score says the site has a problem; it does not say where to start.
+ * Each page is scored through the same pipeline as the headline score, so the numbers are
+ * directly comparable, and the worst page is the one that sets the site-wide score.
+ */
+function pageRankingSection(report: AuditReport): (Paragraph | Table)[] {
+  const ranks = report.pageRisks ?? [];
+  if (ranks.length < 2) return [];
+
+  const widths = [3600, 900, 900, 900, 900, 2160];
+  const rows = ranks.slice(0, TABLE_CAP).map((p, i) => {
+    const risk = riskLevel(p.score);
+    return [
+      cell(p.path, widths[0], { bold: i === 0 }),
+      cell(String(p.score), widths[1], { fill: risk.fill, align: AlignmentType.CENTER, bold: true }),
+      cell(String(p.trackersBeforeConsent), widths[2], { align: AlignmentType.CENTER }),
+      cell(String(p.cookiesBeforeConsent), widths[3], { align: AlignmentType.CENTER }),
+      cell(String(p.domainsBeforeConsent), widths[4], { align: AlignmentType.CENTER }),
+      cell(p.issues.join(" · "), widths[5]),
+    ];
+  });
+  const out: (Paragraph | Table)[] = [
+    h2("6.1 Page-by-page risk"),
+    para(
+      `Pages are listed worst-first by the same 0–100 score used for the site (100 = best), with equal scores ordered by raw pre-consent exposure. The site score (${report.summary.privacyScore}) reflects the whole scan; this table shows where the exposure is concentrated.`,
+      { italics: true, color: "666666", size: 18 },
+    ),
+    dataTable(["Page", "Score", "Trackers", "Cookies", "Domains", "Issues"], widths, rows),
+  ];
+  if (ranks.length > TABLE_CAP) out.push(para(`…and ${ranks.length - TABLE_CAP} more (see report.json).`, { italics: true }));
+  out.push(
+    para("“Trackers”, “Cookies” and “Domains” count non-essential items observed before consent on that page.", {
+      italics: true,
+      color: "666666",
+      size: 18,
+    }),
+  );
   return out;
 }
 
@@ -509,6 +693,10 @@ function recommendationsSection(report: AuditReport): (Paragraph | Table)[] {
     tech.push("Remove retired Universal Analytics tags/cookies that still load — dead weight.");
   if (titles.has("Development / QA tooling on production"))
     tech.push("Remove development / QA tooling (e.g. BugHerd) from the production site — it should not be on a live site even if gated.");
+  if (titles.has("No US state-privacy opt-out link"))
+    tech.push("Publish a “Do Not Sell or Share My Personal Information” / “Your Privacy Choices” link (conventionally in the footer, on every page) and wire it to actually disable advertising tags.");
+  if (titles.has("Global Privacy Control signal not honored"))
+    tech.push("Honor the Global Privacy Control signal: treat Sec-GPC: 1 / navigator.globalPrivacyControl as an opt-out and suppress advertising and analytics tags for that visitor.");
   // Pre-consent-blocking advice only when something actually fires before consent.
   if (preConsent) {
     tech.push("Manually block any scripts hardcoded in the theme that the consent platform does not auto-detect.");
@@ -611,7 +799,52 @@ function appendixSection(report: AuditReport): (Paragraph | Table)[] {
 
 // ---------- top-level document ----------
 
-export function buildReportDocument(report: AuditReport, options: DocxOptions = {}): Document {
+/**
+ * Backfill fields added after a report.json was written.
+ *
+ * `privacy-audit report <report.json>` re-renders reports produced by earlier versions of
+ * the tool, so the renderer must not assume fields that did not exist then (a missing
+ * `summary.breakdown` would otherwise throw mid-render). Derived counts are recomputed
+ * from the arrays that were always present.
+ */
+function withDefaults(report: AuditReport): AuditReport {
+  const cookies = (report.cookies ?? []).map((c) => ({ ...c, risk: c.risk ?? "none" }));
+  const inventory = (report.inventory ?? []).map((i) => ({
+    ...i,
+    risk: i.risk ?? "none",
+    firstSeenMs: typeof i.firstSeenMs === "number" ? i.firstSeenMs : null,
+  }));
+  const count = (total: number, beforeConsent: number): SectionCounts => ({
+    total,
+    beforeConsent,
+    afterConsentOnly: Math.max(0, total - beforeConsent),
+  });
+  const nonNecessary = cookies.filter((c) => c.category !== "necessary");
+  const byParty = (party: "first" | "third") => nonNecessary.filter((c) => c.party === party);
+  const beforeOf = (list: typeof cookies) => list.filter((c) => c.beforeConsent).length;
+
+  return {
+    ...report,
+    inventory,
+    cookies,
+    pageRisks: report.pageRisks ?? [],
+    usOptOutLinkUrl: report.usOptOutLinkUrl ?? null,
+    consentMechanism: { ...report.consentMechanism, gpcTested: report.consentMechanism?.gpcTested ?? false },
+    summary: {
+      ...report.summary,
+      breakdown: report.summary.breakdown ?? {
+        services: count(inventory.length, inventory.filter((i) => i.firesBeforeConsent).length),
+        cookies: count(cookies.length, beforeOf(nonNecessary)),
+        firstPartyCookies: count(byParty("first").length, beforeOf(byParty("first"))),
+        thirdPartyCookies: count(byParty("third").length, beforeOf(byParty("third"))),
+        domains: count((report.beforeConsentDomains ?? []).length, (report.beforeConsentDomains ?? []).length),
+      },
+    },
+  };
+}
+
+export function buildReportDocument(rawReport: AuditReport, options: DocxOptions = {}): Document {
+  const report = withDefaults(rawReport);
   const o: Required<DocxOptions> = {
     clientName: options.clientName ?? clientNameFromDomain(report.scan.domain),
     agencyName: options.agencyName ?? "Planeteria Media",

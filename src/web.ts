@@ -219,7 +219,21 @@ export const WEB_FORM_HTML = `<!doctype html>
     html += "<tr><td>Trackers before consent</td><td>" + s.trackersBeforeConsent + "</td></tr>";
     html += "<tr><td>Cookies before consent</td><td>" + s.cookiesBeforeConsent + "</td></tr>";
     html += "<tr><td>Third-party domains before consent</td><td>" + s.domainsBeforeConsent + "</td></tr>";
+    html += "<tr><td>US opt-out link (CCPA/CPRA)</td><td>" + (r.usOptOutLinkUrl ? esc(r.usOptOutLinkUrl) : "Not found") + "</td></tr>";
+    var gpc = r.consentMechanism && r.consentMechanism.gpcTested
+      ? (r.consentMechanism.gpcHonored === null ? "Inconclusive" : (r.consentMechanism.gpcHonored ? "Yes" : "No"))
+      : "Not tested";
+    html += "<tr><td>GPC honored</td><td>" + gpc + "</td></tr>";
     html += "</table>";
+
+    if (r.pageRisks && r.pageRisks.length > 1){
+      html += "<h3 style='color:#1F3A5F'>Pages, worst first</h3><table><tr><th>Page</th><th>Score</th><th>Trackers</th><th>Cookies</th></tr>";
+      for (var p=0;p<r.pageRisks.length;p++){
+        var pr = r.pageRisks[p];
+        html += "<tr><td>" + esc(pr.path) + "</td><td>" + pr.score + "</td><td>" + pr.trackersBeforeConsent + "</td><td>" + pr.cookiesBeforeConsent + "</td></tr>";
+      }
+      html += "</table>";
+    }
 
     if (r.findings && r.findings.length){
       html += "<h3 style='color:#1F3A5F'>Findings</h3><table><tr><th>Severity</th><th>Finding</th></tr>";

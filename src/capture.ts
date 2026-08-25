@@ -2,12 +2,15 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, Page, Request } from "playwright";
 import { detectConsentUi, forceCmpBanner, runAutoconsent } from "./consent.js";
+import { sameSite } from "./domain.js";
+import { lookupVendor } from "./vendor-map.js";
 import type {
   CapturePass,
   CapturedCookie,
   CapturedRequest,
   CapturedScript,
   ConsentModeSignals,
+  GpcProbe,
   PageCapture,
 } from "./types.js";
 
@@ -52,12 +55,6 @@ async function closeContextBounded(ctx: BrowserContext, ms: number, log: (m: str
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-/** A registrable-domain-ish comparison: same site if eTLD+1 matches (best-effort). */
-function sameSite(a: string, b: string): boolean {
-  const reg = (h: string) => h.split(".").slice(-2).join(".");
-  return reg(a) === reg(b);
 }
 
 const FONT_EXT = /\.(woff2?|ttf|otf|eot)(\?|$)/i;
@@ -115,7 +112,14 @@ function queryString(url: string): HarPair[] {
 class RequestRecorder {
   private records: CapturedRequest[] = [];
   private har = new Map<Request, HarReqMeta>();
+  /** Navigation start, so every request carries an offset for the consent timeline. */
+  private t0 = Date.now();
   constructor(private firstPartyHost: string) {}
+
+  /** Reset the timeline origin — call immediately before `page.goto`. */
+  markNavigationStart() {
+    this.t0 = Date.now();
+  }
 
   attach(page: Page) {
     page.on("request", (req) => {
@@ -130,6 +134,7 @@ class RequestRecorder {
           resourceType: type,
           isThirdParty: !sameSite(host, this.firstPartyHost),
           isFont: type === "font" || FONT_EXT.test(url),
+          firstSeenMs: Math.max(0, Date.now() - this.t0),
         });
       }
       const post = req.postData();
@@ -296,8 +301,16 @@ export async function detectConsentMode(page: Page): Promise<ConsentModeSignals>
   }
 }
 
-/** Find linked privacy and cookie policies on the page (for the §5 policy-alignment finding). */
-export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl: string | null; cookiePolicyUrl: string | null }> {
+/**
+ * Find linked privacy / cookie policies and the US state-privacy opt-out link.
+ *
+ * The opt-out link is what CCPA/CPRA-style laws expect where personal information is sold
+ * or shared for cross-context behavioral advertising — conventionally labelled "Do Not
+ * Sell or Share My Personal Information" or "Your Privacy Choices". Its absence is a
+ * concrete, automatable observation, so we report it rather than leaving US-law coverage
+ * to the manual step.
+ */
+export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl: string | null; cookiePolicyUrl: string | null; usOptOutLinkUrl: string | null }> {
   try {
     return await page.evaluate(() => {
       const cookieLabel = /cookie[\s-]?(policy|notice|statement|preferences?)/i;
@@ -307,24 +320,39 @@ export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl:
       // Fallback: policy hubs not literally labelled "privacy" that conventionally hold the
       // privacy statement (e.g. "Website Policies" -> /website-policies/, "Legal"). Used only
       // when no explicit privacy link is found. Kept conservative (no bare "terms"/"policies").
-      const genericPolicyLabel = /\b(website|site)\s+polic(y|ies)\b|\blegal(\s+(notice|information))?\b/i;
-      const genericPolicyHref = /(website|site)-?polic(y|ies)|\/legal(?:[/#?-]|$)/i;
+      // A bare "Policies" / "Policies & Notices" footer hub is the common home for the
+      // privacy statement on municipal and agency sites (observed on transit-agency
+      // audits), so it counts as a last-resort candidate — but only as a short link
+      // label, never from arbitrary body copy.
+      const genericPolicyLabel = /^\s*polic(y|ies)\b|\b(website|site)\s+polic(y|ies)\b|\blegal(\s+(notice|information))?\b/i;
+      const genericPolicyHref = /(website|site)-?polic(y|ies)|\/polic(y|ies)(?:[/#?]|$)|\/legal(?:[/#?-]|$)/i;
+      // US state-privacy opt-out ("Do Not Sell or Share…", "Your Privacy Choices",
+      // "Limit the Use of My Sensitive Personal Information").
+      const usOptOutLabel =
+        /do\s+not\s+sell|do\s+not\s+share|your\s+privacy\s+choices|limit\s+the\s+use\s+of\s+my\s+sensitive|opt[-\s]?out\s+of\s+(sale|sharing)/i;
+      const usOptOutHref = /do-?not-?sell|privacy-?choices|ccpa|cpra|opt-?out/i;
       let privacy: string | null = null;
       let cookie: string | null = null;
       let genericPolicy: string | null = null;
-      for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+      let usOptOut: string | null = null;
+      for (const a of Array.from(document.querySelectorAll("a[href],button"))) {
         const text = (a.textContent || "").trim();
-        const href = (a as HTMLAnchorElement).href;
-        if (href.startsWith("javascript:")) continue;
+        const href = a instanceof HTMLAnchorElement ? a.href : "";
+        // A "Your Privacy Choices" control is often a button that opens a CMP panel
+        // rather than a link, so accept either; record "#" when there is no URL.
+        if (!usOptOut && (usOptOutLabel.test(text) || (href && usOptOutHref.test(href)))) {
+          usOptOut = href || "(in-page control)";
+        }
+        if (!href || href.startsWith("javascript:")) continue;
         if (!cookie && (cookieLabel.test(text) || cookieHref.test(href))) cookie = href;
         else if (!privacy && (privacyLabel.test(text) || privacyHref.test(href))) privacy = href;
         else if (!genericPolicy && (genericPolicyLabel.test(text) || genericPolicyHref.test(href))) genericPolicy = href;
-        if (privacy && cookie) break;
+        if (privacy && cookie && usOptOut) break;
       }
-      return { privacyPolicyUrl: privacy ?? genericPolicy, cookiePolicyUrl: cookie };
+      return { privacyPolicyUrl: privacy ?? genericPolicy, cookiePolicyUrl: cookie, usOptOutLinkUrl: usOptOut };
     });
   } catch {
-    return { privacyPolicyUrl: null, cookiePolicyUrl: null };
+    return { privacyPolicyUrl: null, cookiePolicyUrl: null, usOptOutLinkUrl: null };
   }
 }
 
@@ -341,7 +369,72 @@ export interface CaptureOptions {
   outputDir: string;
   /** When false, skip the reject pass (v1 MVP without §4.4 reject test). */
   doReject: boolean;
+  /**
+   * Run the Global Privacy Control pass on this page. It costs an extra page load, so the
+   * caller enables it only for the representative page rather than site-wide.
+   */
+  doGpc?: boolean;
   log: (m: string) => void;
+}
+
+/** Non-essential services (by vendor map) seen in a pass — the unit the GPC test compares. */
+function nonEssentialServices(requests: CapturedRequest[]): Set<string> {
+  const out = new Set<string>();
+  for (const r of requests) {
+    if (!r.isThirdParty) continue;
+    const v = lookupVendor(r.url);
+    if (v && (v.category === "analytics" || v.category === "marketing" || v.category === "non-essential")) {
+      out.add(v.name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Global Privacy Control pass (§4.3 "gpcHonored").
+ *
+ * Loads the page in a fresh context that both sends the `Sec-GPC: 1` request header and
+ * exposes `navigator.globalPrivacyControl === true`, then compares which non-essential
+ * services still fire against the no-GPC baseline. Reporting "not tested" while the field
+ * exists in the report is worse than not having the field, so this actually runs it.
+ *
+ * `honored` is null when the baseline had nothing non-essential to suppress — there is
+ * nothing to conclude, which is different from "not honored".
+ */
+async function runGpcPass(
+  browser: Browser,
+  url: string,
+  baseline: Set<string>,
+  opts: CaptureOptions,
+): Promise<GpcProbe> {
+  const firstPartyHost = hostnameOf(url);
+  let ctx: BrowserContext | null = null;
+  try {
+    ctx = await browser.newContext({ ...CAPTURE_CONTEXT, extraHTTPHeaders: { "Sec-GPC": "1" } });
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, "globalPrivacyControl", { get: () => true, configurable: true });
+    });
+    const recorder = new RequestRecorder(firstPartyHost);
+    const page = await ctx.newPage();
+    recorder.attach(page);
+    recorder.markNavigationStart();
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    await settle(page);
+    const withGpc = nonEssentialServices(recorder.drain());
+    const persisted = [...baseline].filter((n) => withGpc.has(n)).sort();
+    const suppressed = [...baseline].filter((n) => !withGpc.has(n)).sort();
+    return {
+      tested: true,
+      honored: baseline.size === 0 ? null : persisted.length === 0,
+      suppressed,
+      persisted,
+    };
+  } catch (err) {
+    opts.log(`  capture error (GPC pass): ${(err as Error).message}`);
+    return { tested: false, honored: null, suppressed: [], persisted: [] };
+  } finally {
+    if (ctx) await closeContextBounded(ctx, CONTEXT_CLOSE_TIMEOUT_MS, opts.log);
+  }
 }
 
 /**
@@ -387,6 +480,8 @@ export async function capturePage(
     screenshotPath: null,
     privacyPolicyUrl: null,
     cookiePolicyUrl: null,
+    usOptOutLinkUrl: null,
+    gpc: { tested: false, honored: null, suppressed: [], persisted: [] },
   };
 
   // ---- Pass 1 + 2: pre-consent and after-accept (shared context) ----
@@ -397,6 +492,7 @@ export async function capturePage(
     recorder = new RequestRecorder(firstPartyHost);
     const page = await ctx.newPage();
     recorder.attach(page);
+    recorder.markNavigationStart();
 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     await settle(page);
@@ -410,6 +506,7 @@ export async function capturePage(
     const policies = await detectPolicyLinks(page);
     capture.privacyPolicyUrl = policies.privacyPolicyUrl;
     capture.cookiePolicyUrl = policies.cookiePolicyUrl;
+    capture.usOptOutLinkUrl = policies.usOptOutLinkUrl;
     capture.consentUi = await detectConsentUi(page);
     // If a CMP is present but its banner didn't render (no controls seen), ask it to show
     // and re-scan — captures accept/reject/preferences labels for the report when possible.
@@ -458,6 +555,7 @@ export async function capturePage(
       const recorder = new RequestRecorder(firstPartyHost);
       const page = await rctx.newPage();
       recorder.attach(page);
+      recorder.markNavigationStart();
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       await settle(page);
       recorder.drain(); // discard pre-consent; we already have it
@@ -473,6 +571,11 @@ export async function capturePage(
     } finally {
       if (rctx) await closeContextBounded(rctx, CONTEXT_CLOSE_TIMEOUT_MS, opts.log);
     }
+  }
+
+  // ---- Pass 4: Global Privacy Control (opt-in, representative page only) ----
+  if (opts.doGpc && !capture.error) {
+    capture.gpc = await runGpcPass(browser, url, nonEssentialServices(capture.preConsent.requests), opts);
   }
 
   return capture;

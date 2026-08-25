@@ -49,7 +49,14 @@ This shape maps directly onto the report sections. Keep field names stable.
     "cookiesBeforeConsent": 4,
     "domainsBeforeConsent": 2,
     "thirdPartyFonts": 0,
-    "privacyScore": 70                    // 0–100, 100 = best (no issues); our own weighting, see §6
+    "privacyScore": 70,                   // 0–100, 100 = best (no issues); our own weighting, see §6
+    "breakdown": {                        // total / before-consent / after-consent-only per section
+      "services":          { "total": 7, "beforeConsent": 1, "afterConsentOnly": 6 },
+      "cookies":           { "total": 9, "beforeConsent": 4, "afterConsentOnly": 5 },
+      "firstPartyCookies": { "total": 3, "beforeConsent": 1, "afterConsentOnly": 2 },
+      "thirdPartyCookies": { "total": 6, "beforeConsent": 3, "afterConsentOnly": 3 },
+      "domains":           { "total": 5, "beforeConsent": 2, "afterConsentOnly": 3 }
+    }
   },
   "inventory": [
     {
@@ -61,12 +68,15 @@ This shape maps directly onto the report sections. Keep field names stable.
       "firesBeforeConsent": true,
       "injectionSource": "gtm",           // theme|gtm|plugin|unknown
       "inPolicy": "review",               // yes|no|review
-      "pages": ["/"]
+      "pages": ["/"],
+      "risk": "medium",                   // high|medium|low|none — per-item exposure grade
+      "firstSeenMs": 240                  // ms after navigation start, representative page (null if not seen pre-consent)
     }
   ],
   "cookies": [
     { "name": "_ga", "domain": "example.com", "party": "first",
-      "beforeConsent": true, "expiry": "2027-07-20", "category": "analytics" }
+      "beforeConsent": true, "expiry": "2027-07-20", "category": "analytics",
+      "risk": "medium" }
   ],
   "consentMechanism": {
     "bannerPresent": true,
@@ -76,7 +86,8 @@ This shape maps directly onto the report sections. Keep field names stable.
     "blocksBeforeConsent": false,
     "cmpIdentified": null,                // string name or null
     "consentModeV2": "partial",           // present|partial|absent
-    "gpcHonored": null                    // true|false|null if untested
+    "gpcHonored": null,                   // true|false|null (null = inconclusive: nothing to suppress)
+    "gpcTested": true                     // whether the GPC pass actually ran
   },
   "runtime": {
     "beforeConsent": [ { "type": "request|cookie", "name": "...", "destination": "..." } ],
@@ -94,7 +105,13 @@ This shape maps directly onto the report sections. Keep field names stable.
   ],
   "beforeConsentDomains": ["google-analytics.com", "googletagmanager.com"],  // site-wide registrable domains before consent (backs summary.domainsBeforeConsent)
   "privacyPolicyUrl": "https://www.example.com/privacy-policy",              // detected privacy policy link, or null
-  "cookiePolicyUrl": null                                                    // detected cookie policy link, or null
+  "cookiePolicyUrl": null,                                                   // detected cookie policy link, or null
+  "usOptOutLinkUrl": null,                                                   // "Do Not Sell or Share" / "Your Privacy Choices" link, or null
+  "pageRisks": [                                                             // per-page scores, worst-first (empty for a single-page scan)
+    { "url": "https://www.example.com/", "path": "/", "score": 40,
+      "issues": ["Third-party tracking before consent"],
+      "trackersBeforeConsent": 1, "cookiesBeforeConsent": 4, "domainsBeforeConsent": 2 }
+  ]
 }
 ```
 
@@ -108,12 +125,17 @@ This shape maps directly onto the report sections. Keep field names stable.
 - **Banner "non-blocking" detection:** the test is whether non-essential requests/cookies fire on load *despite* a banner being present, and whether rejecting suppresses them. Capture before any click.
 - **Consent Mode v2 present ≠ gated.** A site can have Consent Mode signals while defaulting to "granted," so tags still fire. Detect the default state, don't just detect presence.
 - **Known limitation to document, not solve in v1:** interaction-triggered trackers (chat widget opening, video play) won't appear unless those interactions are scripted.
+- **Classify cookies by name, never by party.** A vendor's cookie is the same tracker whether it is written on the vendor's domain or on the first-party domain (StackAdapt `sa-user-id`, Reddit `_rdt_uuid`, Simpli.fi `__spdt` all appear first-party). Anything unmatched is `unknown`, not a party-based guess.
+- **Hosts are not always domains.** Bare IPs and multi-label public suffixes (`co.uk`) must not be truncated to the last two labels — see `src/domain.ts`. A truncated IP ("122.172") reaches the client as an unidentifiable third party.
+- **US state privacy is in scope, not just GDPR-shaped consent.** Report whether a "Do Not Sell or Share My Personal Information" / "Your Privacy Choices" link exists, and actually test GPC (`Sec-GPC: 1` + `navigator.globalPrivacyControl`) rather than emitting "not tested". Keep the wording observational — presence/absence of a control, never a compliance verdict.
+- **Per-item risk grades and per-page scores.** Every tracker/cookie carries `risk`, and every page carries a score, so the client can see which page to fix first instead of one site-wide number.
 
 ## 7. Build phases
 
 - **v1 (MVP):** sitemap enumeration → Playwright per-page capture → autoconsent accept → before/after JSON → vendor-map classification → write JSON + HAR + screenshots. Single domain, `--max-pages` cap.
 - **v2:** reject-pass test; Consent Mode default-state detection; richer vendor map; risk scoring; CLI flags for sampling.
 - **v3:** scheduled re-scan (monitoring) with diff vs. previous run; hook JSON into the Word report generator.
+- **v4 (done):** per-item risk grades; per-page scoring; CCPA/CPRA opt-out-link detection; a real GPC pass; consent timeline (ms to first request); total/before/after counts; first- vs third-party cookie split.
 
 ## 8. Constraints & ethics
 

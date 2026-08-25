@@ -10,6 +10,7 @@ interface ScanOptions {
   maxPages: string;
   sampleByTemplate: boolean;
   reject: boolean;
+  gpc: boolean;
   robots: boolean;
   out: string;
   verbose: boolean;
@@ -49,12 +50,13 @@ async function runScan(domainArg: string, opts: ScanOptions) {
 
   console.error(`\n▶ Privacy & Tracking Audit — ${domainArg}`);
   console.error(`  output: ${outputDir}`);
-  console.error(`  passes: pre-consent → accept${opts.reject ? " → reject" : ""}\n`);
+  console.error(`  passes: pre-consent → accept${opts.reject ? " → reject" : ""}${opts.gpc ? " → GPC" : ""}\n`);
 
   const { report, reportJsonPath, evidenceDir } = await performAudit(domainArg, {
     maxPages,
     sampleByTemplate: opts.sampleByTemplate,
     doReject: opts.reject,
+    doGpc: opts.gpc,
     respectRobots: opts.robots,
     outputDir,
     log,
@@ -103,6 +105,7 @@ function main() {
     .option("-m, --max-pages <n>", "Maximum pages to scan", "25")
     .option("--sample-by-template", "Scan one representative page per URL template", false)
     .option("--no-reject", "Skip the reject (opt-out) pass")
+    .option("--no-gpc", "Skip the Global Privacy Control pass (saves one page load)")
     .option("--no-robots", "Do not respect robots.txt (use only on sites you control)")
     .option("-o, --out <dir>", "Output base directory", "output")
     .option("--docx", "Also render the branded Word report (report.docx)", false)

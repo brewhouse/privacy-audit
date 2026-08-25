@@ -147,6 +147,53 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "newrelic.com": { vendor: "New Relic", name: "New Relic", category: "functional" },
   "nr-data.net": { vendor: "New Relic", name: "New Relic", category: "functional" },
 
+  // --- Ad-tech / social pixels seen in transit & municipal audits ---
+  // These were previously landing in the report as "Unclassified third party", which reads
+  // as a classifier failure on vendors whose purpose is not in doubt.
+  "stackadapt.com": { vendor: "StackAdapt", name: "StackAdapt", category: "marketing" },
+  // Leading dot = host-suffix match. A bare "mountain.com" substring would also match
+  // unrelated hosts (ironmountain.com, greenmountain.com); ".mountain.com" matches MNTN's
+  // subdomains (px./dx./gs.) without catching those.
+  ".mountain.com": { vendor: "MNTN", name: "MNTN (Mountain) CTV ads", category: "marketing" },
+  "redditstatic.com": { vendor: "Reddit", name: "Reddit Pixel", category: "marketing" },
+  "reddit.com": { vendor: "Reddit", name: "Reddit", category: "marketing" },
+  "byspotify.com": { vendor: "Spotify", name: "Spotify Ads Pixel", category: "marketing" },
+  "pixels.spotify.com": { vendor: "Spotify", name: "Spotify Ads Pixel", category: "marketing" },
+  "spotify.com": { vendor: "Spotify", name: "Spotify", category: "marketing" },
+  "licdn.com": { vendor: "LinkedIn", name: "LinkedIn (assets / Insight)", category: "marketing" },
+  "linkedin.com": { vendor: "LinkedIn", name: "LinkedIn", category: "marketing" },
+  "bing.net": { vendor: "Microsoft", name: "Microsoft Bing (assets)", category: "marketing" },
+  "facebook.com": { vendor: "Meta", name: "Meta (Facebook)", category: "marketing" },
+  "facebook.net": { vendor: "Meta", name: "Meta Pixel", category: "marketing" },
+
+  // --- Product analytics / experimentation ---
+  "segment.io": { vendor: "Twilio Segment", name: "Segment", category: "analytics" },
+  "segment.com": { vendor: "Twilio Segment", name: "Segment", category: "analytics" },
+  "pendo.io": { vendor: "Pendo", name: "Pendo", category: "analytics" },
+  "heapanalytics.com": { vendor: "Heap", name: "Heap Analytics", category: "analytics" },
+  "launchdarkly.com": { vendor: "LaunchDarkly", name: "LaunchDarkly (feature flags)", category: "functional" },
+
+  // --- Maps & geodata embeds (functional) ---
+  "mapbox.com": { vendor: "Mapbox", name: "Mapbox", category: "functional" },
+  "maptiler.com": { vendor: "MapTiler", name: "MapTiler", category: "functional" },
+  "mapme.com": { vendor: "Mapme", name: "Mapme (map embed)", category: "functional" },
+  "arcgis.com": { vendor: "Esri", name: "ArcGIS (map embed)", category: "functional" },
+  "openstreetmap.org": { vendor: "OpenStreetMap", name: "OpenStreetMap tiles", category: "functional" },
+
+  // --- Embedded content & CDNs (functional) ---
+  "bootstrapcdn.com": { vendor: "BootstrapCDN", name: "BootstrapCDN", category: "functional" },
+  "googleusercontent.com": { vendor: "Google", name: "Google user content (images)", category: "functional" },
+  "blogspot.com": { vendor: "Google", name: "Blogger (embedded blog)", category: "functional" },
+  "blogger.com": { vendor: "Google", name: "Blogger (embedded blog)", category: "functional" },
+  "blogblog.com": { vendor: "Google", name: "Blogger (assets)", category: "functional" },
+  "opengov.com": { vendor: "OpenGov", name: "OpenGov (procurement portal)", category: "functional" },
+  // Server-side tagging endpoints: they proxy tags rather than being trackers themselves —
+  // classified like ss-gtm.com above, and named so the reviewer knows what to look behind.
+  "taggrs.io": { vendor: "Taggrs", name: "Taggrs (server-side tagging)", category: "functional" },
+  // Generic Google APIs — listed LAST among googleapis hosts so the specific entries above
+  // (fonts / maps / ajax) still win; substring lookup returns the first match in insertion order.
+  "googleapis.com": { vendor: "Google", name: "Google APIs", category: "functional" },
+
   // --- Dev / QA tools that should not be on production (CLAUDE.md §6) ---
   "bugherd.com": { vendor: "BugHerd", name: "BugHerd (QA)", category: "non-essential" },
   "sidebar.bugherd.com": { vendor: "BugHerd", name: "BugHerd (QA sidebar)", category: "non-essential" },

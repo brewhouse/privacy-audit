@@ -12,6 +12,8 @@ export interface AuditRunOptions {
   maxPages: number;
   sampleByTemplate: boolean;
   doReject: boolean;
+  /** Run the GPC pass (one extra page load, on the first page only). Defaults to on. */
+  doGpc?: boolean;
   respectRobots: boolean;
   outputDir: string;
   log: (m: string) => void;
@@ -121,7 +123,14 @@ export async function performAudit(domainInput: string, opts: AuditRunOptions): 
       opts.onProgress?.(i, urls.length, url);
       try {
         const cap = await withTimeout(
-          capturePage(browser, url, i, { outputDir: opts.outputDir, doReject: opts.doReject, log: opts.log }),
+          capturePage(browser, url, i, {
+            outputDir: opts.outputDir,
+            doReject: opts.doReject,
+            // GPC costs a whole extra page load; the signal is site-wide, so testing the
+            // first (representative) page is enough.
+            doGpc: (opts.doGpc ?? true) && i === 1,
+            log: opts.log,
+          }),
           pageTimeout,
           `page ${i} (${url})`,
         );

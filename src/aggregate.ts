@@ -1,6 +1,8 @@
+import { registrableDomain } from "./domain.js";
 import { lookupVendor } from "./vendor-map.js";
 import type {
   AuditReport,
+  Breakdown,
   CapturedCookie,
   CapturedRequest,
   CapturedScript,
@@ -12,6 +14,9 @@ import type {
   InjectionSource,
   InventoryItem,
   PageCapture,
+  PageRisk,
+  RiskLevel,
+  SectionCounts,
   RuntimeEvent,
   RuntimeSplit,
   Summary,
@@ -62,7 +67,7 @@ function collectBeforeConsentDomains(captures: PageCapture[]): string[] {
   const set = new Set<string>();
   for (const cap of captures) {
     for (const r of cap.preConsent.requests) {
-      if (r.isThirdParty && !isNecessaryHost(r.domain)) set.add(regDomain(r.domain));
+      if (r.isThirdParty && !isNecessaryHost(r.domain)) set.add(registrableDomain(r.domain));
     }
   }
   return [...set].sort();
@@ -70,15 +75,58 @@ function collectBeforeConsentDomains(captures: PageCapture[]): string[] {
 
 const LEGACY_UA_COOKIE = /^_gat_gtag_UA_|^__utm|^_gat_UA-/i;
 
-// Classify common tracking cookies by name, so first-party analytics/ad cookies (e.g.
-// GA4's _ga / _ga_<id>) are labeled correctly instead of defaulting to "functional".
-const ANALYTICS_COOKIE = /^_ga(_|$)|^_gid$|^_gat(_|$)|^_dc_gtm_|^_clck$|^_clsk$|^_hj|^__hs(tc|sc|src)$|^hubspotutk$|^_omappvp$|^_pk_(id|ses)/i;
-const MARKETING_COOKIE = /^_gcl|^_fbp$|^_fbc$|^fr$|^_uet|^muid$|^ide$|^test_cookie$|^_ttp$|^anonchk$|^_pin_unauth$|^personalization_id$|^_scid$/i;
+/**
+ * Classify tracking cookies by NAME, independent of which party set them.
+ *
+ * A vendor's cookie is the same tracker whether its script writes it on the vendor's own
+ * domain or on the site's domain. StackAdapt (`sa-user-id*`), Reddit (`_rdt_uuid`) and
+ * Simpli.fi (`__spdt`) all write first-party copies, and the old party-based fallback
+ * ("first party ⇒ functional") quietly downgraded exactly those — the same cookie name
+ * came out `marketing` on the vendor domain and `functional` on the client's, which
+ * deflated the headline "cookies set before consent" count and read as a classifier bug
+ * to anyone comparing the two rows.
+ *
+ * Only distinctive, vendor-specific names are listed. Generic names (`test`, `guid`,
+ * `visitor_id`) are deliberately absent: matching those globally would mislabel ordinary
+ * application cookies. Anything unmatched falls through to the vendor map, and failing
+ * that to `unknown` — never to a guess based on party.
+ */
+const ANALYTICS_COOKIE =
+  /^_ga(_|$)|^_gid$|^_gat(_|$)|^_dc_gtm_|^_clck$|^_clsk$|^_hj|^__hs(tc|sc|src)$|^hubspotutk$|^_omappvp$|^_pk_(id|ses)|^_hp2_|^ajs_(anonymous|user)_id$|^_pendo_/i;
+const MARKETING_COOKIE =
+  /^_gcl|^_fbp$|^_fbc$|^fr$|^_uet|^muid$|^mr$|^srm_b$|^ide$|^test_cookie$|^_ttp$|^anonchk$|^_pin_unauth$|^personalization_id$|^_scid$|^_rdt_uuid$|^sa-user-id|^__spdt$|^suid$|^sifi_|^bcookie$|^bscookie$|^lidc$|^li_sugr$|^li_gc$|^usermatchhistory$|^analyticssynchistory$|^ar_debug$|^nid$|^ysc$|^visitor_info1_live$|^__secure-(ynid|rollout_token)$|^rl_visitor_history$/i;
 
 // Strictly-necessary cookies that must not count as pre-consent violations (§6):
 // the consent platform's own cookies, plus session/security/CDN essentials.
 const NECESSARY_COOKIE =
   /^(wpconsent|wp_consent|cookieyes|cookielawinfo|cmplz|complianz|borlabs|cookieconsent|optanon|usprivacy|termly|osano|usercentrics|real_cookie_banner|moove_gdpr|__cf_bm|cf_clearance|_cfuvid|phpsessid|wordpress_test_cookie|wordpress_logged_in|wp-settings|woocommerce_(cart_hash|items_in_cart)|wp_woocommerce_session)/i;
+
+/**
+ * Per-item exposure grade. Nothing that fires only *after* a consent choice is graded —
+ * the grade answers "what leaked before the visitor could say no", which is what the
+ * remediation list is built from.
+ */
+export function riskFor(category: Category, beforeConsent: boolean): RiskLevel {
+  if (!beforeConsent) return "none";
+  switch (category) {
+    case "marketing":
+      return "high";
+    case "analytics":
+    case "non-essential":
+      return "medium";
+    case "functional":
+    case "unknown":
+      // Functional items can still be arguable (reCAPTCHA, embeds) and unclassified ones
+      // are unknown-by-definition — both are surfaced, neither is asserted as a violation.
+      return "low";
+    case "necessary":
+      return "none";
+  }
+}
+
+function counts(total: number, beforeConsent: number): SectionCounts {
+  return { total, beforeConsent, afterConsentOnly: Math.max(0, total - beforeConsent) };
+}
 
 interface InventoryAccumulator extends InventoryItem {
   /** dedup helper: vendor+name key already in `pages` set */
@@ -97,11 +145,6 @@ function pickInjectionSource(capture: PageCapture, vendorName: string): Injectio
   if (allScripts.some((s) => s.injectionHint === "plugin")) return "plugin";
   if (allScripts.some((s) => s.injectionHint === "theme")) return "theme";
   return "unknown";
-}
-
-/** Registrable-domain-ish grouping key for unclassified third parties (best-effort eTLD+1). */
-function regDomain(host: string): string {
-  return host.split(".").slice(-2).join(".");
 }
 
 /**
@@ -124,7 +167,8 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
     return item;
   };
 
-  for (const cap of captures) {
+  for (const [pageIndex, cap] of captures.entries()) {
+    const isRepresentative = pageIndex === 0;
     // A request seen in the pre-consent pass fires before consent.
     const preHosts = new Set(cap.preConsent.requests.filter((r) => r.isThirdParty).map((r) => r.url));
 
@@ -144,10 +188,12 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
           firesBeforeConsent: false,
           injectionSource: pickInjectionSource(cap, vendor.name),
           inPolicy: "review", // human/legal step decides yes/no
+          risk: "none",
+          firstSeenMs: null,
         }));
       } else {
         // Unclassified third party — surface it rather than dropping it.
-        const dom = regDomain(req.domain);
+        const dom = registrableDomain(req.domain);
         const necessary = isNecessaryHost(req.domain);
         const googleOwned = GOOGLE_OWNED.has(dom);
         item = ensure(`unclassified::${dom}`, () => ({
@@ -159,15 +205,27 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
           firesBeforeConsent: false,
           injectionSource: pickInjectionSource(cap, dom),
           inPolicy: "review",
+          risk: "none",
+          firstSeenMs: null,
         }));
       }
-      if (firesBefore) item.firesBeforeConsent = true;
+      if (firesBefore) {
+        item.firesBeforeConsent = true;
+        // Earliest sighting on the representative page backs the consent timeline (§4).
+        if (isRepresentative && (item.firstSeenMs === null || req.firstSeenMs < item.firstSeenMs)) {
+          item.firstSeenMs = req.firstSeenMs;
+        }
+      }
       item._pages.add(cap.path);
     }
   }
 
   return [...byKey.values()]
-    .map(({ _pages, ...item }) => ({ ...item, pages: [..._pages].sort() }))
+    .map(({ _pages, ...item }) => ({
+      ...item,
+      pages: [..._pages].sort(),
+      risk: riskFor(item.category, item.firesBeforeConsent),
+    }))
     .sort((a, b) => a.technology.localeCompare(b.technology));
 }
 
@@ -185,11 +243,14 @@ function buildCookies(captures: PageCapture[]): CookieRecord[] {
           ? "analytics"
           : MARKETING_COOKIE.test(c.name)
             ? "marketing"
-            : (vendor?.category ?? (c.party === "first" ? "functional" : "marketing"));
+            : // Fall back to the setting domain's vendor, then to `unknown` — an
+              // unrecognized cookie is unclassified, not "functional because first-party".
+              (vendor?.category ?? "unknown");
       const existing = byKey.get(key);
       const beforeConsent = preNames.has(key);
       if (existing) {
         existing.beforeConsent = existing.beforeConsent || beforeConsent;
+        existing.risk = riskFor(existing.category, existing.beforeConsent);
       } else {
         byKey.set(key, {
           name: c.name,
@@ -198,6 +259,7 @@ function buildCookies(captures: PageCapture[]): CookieRecord[] {
           beforeConsent,
           expiry: c.expiry,
           category,
+          risk: riskFor(category, beforeConsent),
         });
       }
     }
@@ -231,6 +293,10 @@ function buildConsentMechanism(captures: PageCapture[], inventory: InventoryItem
     // "present" here means signals exist but default appears granted (not gating).
   }
 
+  // GPC is probed on the representative page only (one extra load), so take the first
+  // capture that actually ran the pass rather than assuming page 0 has it.
+  const gpc = captures.map((c) => c.gpc).find((g) => g?.tested);
+
   return {
     bannerPresent: anyBanner,
     acceptAll: accept,
@@ -239,7 +305,8 @@ function buildConsentMechanism(captures: PageCapture[], inventory: InventoryItem
     blocksBeforeConsent,
     cmpIdentified: cmp,
     consentModeV2,
-    gpcHonored: null, // not tested in v1
+    gpcHonored: gpc?.honored ?? null,
+    gpcTested: Boolean(gpc?.tested),
   };
 }
 
@@ -271,6 +338,7 @@ function buildFindingsAndRisk(
   inventory: InventoryItem[],
   cookies: CookieRecord[],
   consent: ConsentMechanism,
+  usOptOutLinkUrl: string | null,
 ): { findings: Finding[]; privacyScore: number } {
   const findings: Finding[] = [];
   // `risk` is an internal penalty (0 = clean, higher = worse). We invert it to a
@@ -401,7 +469,45 @@ function buildFindingsAndRisk(
     });
   }
 
-  // 6. reCAPTCHA timing — report, flag for human judgment, do not auto-high (§6).
+  // 6. No US state-privacy opt-out link. Only raised when advertising/marketing trackers
+  //    are actually present — that is the condition under which "sale/sharing" is even in
+  //    question, so a site with no ad tech is not nagged about a link it may not need.
+  //    Wording stays factual (§6): we report the missing link and the trackers that make
+  //    it relevant; whether the law applies is counsel's call.
+  const adTech = inventory.filter((i) => i.category === "marketing");
+  if (!usOptOutLinkUrl && adTech.length) {
+    const beforeConsentAdTech = adTech.filter((i) => i.firesBeforeConsent);
+    risk += 10;
+    findings.push({
+      severity: beforeConsentAdTech.length ? "high" : "medium",
+      title: "No US state-privacy opt-out link",
+      detail:
+        "No “Do Not Sell or Share My Personal Information” / “Your Privacy Choices” link was found on the pages tested, " +
+        "while advertising / marketing trackers are present. US state privacy laws (California’s CCPA/CPRA and similar " +
+        "statutes in other states) generally expect such a control where personal information is sold or shared for " +
+        "cross-context behavioral advertising. Whether the thresholds apply to this organization is a question for counsel.",
+      pages: pagesWithPath((i) => adTech.includes(i)),
+      resources: adTech.map((i) => i.technology),
+    });
+  }
+
+  // 7. GPC ignored — only when the pass actually ran, so a skipped test never reads as a
+  //    failure. `honored: null` means there was nothing non-essential to suppress.
+  const gpc = captures.map((c) => c.gpc).find((g) => g?.tested);
+  if (gpc?.tested && gpc.honored === false) {
+    risk += 10;
+    findings.push({
+      severity: "medium",
+      title: "Global Privacy Control signal not honored",
+      detail:
+        "The page was re-loaded sending the Global Privacy Control signal (Sec-GPC: 1 and navigator.globalPrivacyControl), " +
+        "and non-essential trackers still fired. Several US state laws treat GPC as a valid opt-out request.",
+      pages: captures.filter((c) => c.gpc?.tested).map((c) => c.path),
+      resources: gpc.persisted,
+    });
+  }
+
+  // 8. reCAPTCHA timing — report, flag for human judgment, do not auto-high (§6).
   const recaptcha = inventory.find((i) => i.technology === "reCAPTCHA");
   if (recaptcha?.firesBeforeConsent) {
     findings.push({
@@ -415,6 +521,88 @@ function buildFindingsAndRisk(
   }
 
   return { findings, privacyScore: 100 - Math.min(100, risk) };
+}
+
+/** Every distinct third-party registrable domain contacted in any pass (excl. necessary infra). */
+function collectAllThirdPartyDomains(captures: PageCapture[]): Set<string> {
+  const set = new Set<string>();
+  for (const cap of captures) {
+    for (const r of [...cap.preConsent.requests, ...cap.afterAccept.requests, ...cap.afterReject.requests]) {
+      if (r.isThirdParty && !isNecessaryHost(r.domain)) set.add(registrableDomain(r.domain));
+    }
+  }
+  return set;
+}
+
+/**
+ * Total / before-consent / after-consent-only splits.
+ *
+ * Reporting only the before-consent number leaves the reader without a denominator —
+ * "13 trackers before consent" reads very differently against a total of 15 than against
+ * a total of 54.
+ */
+function buildBreakdown(
+  inventory: InventoryItem[],
+  cookies: CookieRecord[],
+  captures: PageCapture[],
+  beforeConsentDomains: string[],
+): Breakdown {
+  const nonNecessaryCookies = cookies.filter((c) => c.category !== "necessary");
+  const firstParty = nonNecessaryCookies.filter((c) => c.party === "first");
+  const thirdParty = nonNecessaryCookies.filter((c) => c.party === "third");
+  const before = (list: CookieRecord[]) => list.filter((c) => c.beforeConsent).length;
+
+  return {
+    services: counts(inventory.length, inventory.filter((i) => i.firesBeforeConsent).length),
+    cookies: counts(cookies.length, cookies.filter((c) => c.beforeConsent && c.category !== "necessary").length),
+    firstPartyCookies: counts(firstParty.length, before(firstParty)),
+    thirdPartyCookies: counts(thirdParty.length, before(thirdParty)),
+    domains: counts(collectAllThirdPartyDomains(captures).size, beforeConsentDomains.length),
+  };
+}
+
+/**
+ * Per-page scores, worst-first.
+ *
+ * The site-wide score is the aggregate; it does not tell the client which page to fix
+ * first. Each page is re-scored through the same pipeline (inventory → consent → findings)
+ * scoped to that page alone, so a page's score means exactly what the headline score means.
+ */
+function buildPageRisks(captures: PageCapture[], usOptOutLinkUrl: string | null): PageRisk[] {
+  return captures
+    .map((cap) => {
+      const inventory = buildInventory([cap]);
+      addLegacyUaService(inventory, [cap]);
+      const cookies = buildCookies([cap]);
+      const consent = buildConsentMechanism([cap], inventory);
+      const { findings, privacyScore } = buildFindingsAndRisk([cap], inventory, cookies, consent, usOptOutLinkUrl);
+      const domains = new Set(
+        cap.preConsent.requests
+          .filter((r) => r.isThirdParty && !isNecessaryHost(r.domain))
+          .map((r) => registrableDomain(r.domain)),
+      );
+      return {
+        url: cap.url,
+        path: cap.path,
+        score: privacyScore,
+        issues: findings.map((f) => f.title),
+        trackersBeforeConsent: inventory.filter(
+          (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
+        ).length,
+        cookiesBeforeConsent: cookies.filter((c) => c.beforeConsent && c.category !== "necessary").length,
+        domainsBeforeConsent: domains.size,
+      };
+    })
+    // Tie-break on raw exposure: on a badly-exposed site every page bottoms out at 0, and
+    // a table of identical scores tells the client nothing about where to start.
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        b.trackersBeforeConsent - a.trackersBeforeConsent ||
+        b.cookiesBeforeConsent - a.cookiesBeforeConsent ||
+        b.domainsBeforeConsent - a.domainsBeforeConsent ||
+        a.path.localeCompare(b.path),
+    );
 }
 
 function buildSummary(
@@ -444,6 +632,7 @@ function buildSummary(
     domainsBeforeConsent: beforeConsentDomains.length, // backed by report.beforeConsentDomains
     thirdPartyFonts: fonts.size,
     privacyScore,
+    breakdown: buildBreakdown(inventory, cookies, captures, beforeConsentDomains),
   };
 }
 
@@ -474,6 +663,8 @@ function addLegacyUaService(inventory: InventoryItem[], captures: PageCapture[])
     injectionSource: "gtm",
     inPolicy: "review",
     pages: [...pages].sort(),
+    risk: riskFor("analytics", firesBefore),
+    firstSeenMs: null,
   });
 }
 
@@ -535,11 +726,20 @@ export function buildReport(
   const cookies = buildCookies(captures);
   const consentMechanism = buildConsentMechanism(captures, inventory);
   const runtime = buildRuntime(captures);
-  const { findings, privacyScore } = buildFindingsAndRisk(captures, inventory, cookies, consentMechanism);
-  const beforeConsentDomains = collectBeforeConsentDomains(captures);
-  const summary = buildSummary(inventory, cookies, captures, privacyScore, beforeConsentDomains);
   const privacyPolicyUrl = captures.map((c) => c.privacyPolicyUrl).find((u): u is string => Boolean(u)) ?? null;
   const cookiePolicyUrl = captures.map((c) => c.cookiePolicyUrl).find((u): u is string => Boolean(u)) ?? null;
+  const usOptOutLinkUrl = captures.map((c) => c.usOptOutLinkUrl).find((u): u is string => Boolean(u)) ?? null;
+  const { findings, privacyScore } = buildFindingsAndRisk(
+    captures,
+    inventory,
+    cookies,
+    consentMechanism,
+    usOptOutLinkUrl,
+  );
+  const beforeConsentDomains = collectBeforeConsentDomains(captures);
+  const summary = buildSummary(inventory, cookies, captures, privacyScore, beforeConsentDomains);
+  // Per-page scoring is skipped for a single-page scan — the site score already is that page.
+  const pageRisks = captures.length > 1 ? buildPageRisks(captures, usOptOutLinkUrl) : [];
 
   return {
     scan: {
@@ -557,5 +757,7 @@ export function buildReport(
     beforeConsentDomains,
     privacyPolicyUrl,
     cookiePolicyUrl,
+    usOptOutLinkUrl,
+    pageRisks,
   };
 }
