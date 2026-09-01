@@ -6,7 +6,7 @@ import { type Browser, chromium, type Page } from "playwright";
 // page context). Run `npm run build` first — `npm test` does this automatically.
 import { buildReport } from "../dist/aggregate.js";
 import { detectConsentMode, detectPolicyLinks } from "../dist/capture.js";
-import { detectConsentUi } from "../dist/consent.js";
+import { clickConsentControl, detectConsentUi } from "../dist/consent.js";
 import { lookupVendor } from "../dist/vendor-map.js";
 import type { CapturePass, PageCapture } from "../dist/types.js";
 
@@ -31,6 +31,33 @@ const WPCONSENT_FIXTURE = `<!doctype html><html><head>
     <button class="wpconsent-settings-buttons-accept-all">Accept All</button>
     <button class="wpconsent-settings-buttons-reject">Reject</button>
     <button class="wpconsent-settings-buttons-preferences">Preferences</button>
+  </div>
+</div>
+</body></html>`;
+
+// Live WPConsent Premium (verified against test-sakura-finetek.pantheonsite.io,
+// www.cpedv.org, www.sakuraus.com and www.go-metro.com, 2026-09) renders its banner inside
+// an OPEN Shadow DOM attached to #wpconsent-container — the container itself stays an empty
+// shadow host in light DOM. Declarative Shadow DOM (<template shadowrootmode="open">) lets a
+// static fixture reproduce that without running the real plugin bundle. Button labels and
+// structure mirror the live banner's shadowRoot content and screenshot.
+const WPCONSENT_SHADOW_FIXTURE = `<!doctype html><html><head>
+<script src="https://example.test/wp-content/plugins/wpconsent-premium/build/frontend-pro.js"></script>
+</head><body>
+<div id="wpconsent-root">
+  <div id="wpconsent-container">
+    <template shadowrootmode="open">
+      <div class="wpconsent-banner-holder wpconsent-banner-visible" role="dialog" aria-label="Cookie Consent">
+        <div class="wpconsent-banner">
+          <p>We use cookies to improve your experience on our site. By using our site, you consent to cookies.</p>
+          <div class="wpconsent-banner-footer">
+            <button id="wpconsent-preferences-all">Preferences</button>
+            <button id="wpconsent-reject">Reject</button>
+            <button id="wpconsent-accept-all">Accept All</button>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </div>
 </body></html>`;
@@ -134,6 +161,75 @@ describe("WPConsent CMP detection", () => {
     assert.equal(ui.rejectAll, true, 'reject-all recognized ("Reject")');
     assert.equal(ui.acceptAll, true, "accept-all recognized");
     assert.equal(ui.settings, true, 'preferences recognized ("Preferences")');
+  });
+
+  test("sees inside an open Shadow DOM banner (live WPConsent Premium) instead of reporting an empty host", async () => {
+    const ui = await uiFor(WPCONSENT_SHADOW_FIXTURE);
+    assert.equal(ui.cmpIdentified, "WPConsent", "CMP identified via the light-DOM #wpconsent-container host");
+    assert.equal(ui.bannerPresent, true, "banner present");
+    // This is the regression this fixture exists for: before the shadow-aware deepQueryAll
+    // fix, these three were always false for a real WPConsent site (its banner is empty in
+    // light DOM), which triggered the false "banner did not display to the scan" note on
+    // every WPConsent report regardless of whether the banner actually rendered.
+    assert.equal(ui.acceptAll, true, "accept-all recognized inside the shadow root");
+    assert.equal(ui.rejectAll, true, "reject-all recognized inside the shadow root");
+    assert.equal(ui.settings, true, "preferences recognized inside the shadow root");
+  });
+
+  test("clickConsentControl reaches and clicks Accept/Reject inside an open Shadow DOM banner", async () => {
+    const page: Page = await browser.newPage();
+    try {
+      await page.setContent(WPCONSENT_SHADOW_FIXTURE, { waitUntil: "domcontentloaded" });
+      // Instrument the shadow-DOM buttons so we can observe which one actually got clicked,
+      // the same way runAutoconsent's optIn/optOut result is observed in production.
+      await page.evaluate(() => {
+        const host = document.getElementById("wpconsent-container");
+        const root = host?.shadowRoot;
+        const accept = root?.getElementById("wpconsent-accept-all");
+        const reject = root?.getElementById("wpconsent-reject");
+        accept?.addEventListener("click", () => ((window as any).__clicked = "accept"));
+        reject?.addEventListener("click", () => ((window as any).__clicked = "reject"));
+      });
+
+      const acceptedClicked = await clickConsentControl(page, "optIn");
+      assert.equal(acceptedClicked, true, "reports a click happened");
+      assert.equal(await page.evaluate(() => (window as any).__clicked), "accept", "clicked Accept All, not Reject");
+    } finally {
+      await page.close();
+    }
+
+    const page2: Page = await browser.newPage();
+    try {
+      await page2.setContent(WPCONSENT_SHADOW_FIXTURE, { waitUntil: "domcontentloaded" });
+      await page2.evaluate(() => {
+        const host = document.getElementById("wpconsent-container");
+        const root = host?.shadowRoot;
+        const accept = root?.getElementById("wpconsent-accept-all");
+        const reject = root?.getElementById("wpconsent-reject");
+        accept?.addEventListener("click", () => ((window as any).__clicked = "accept"));
+        reject?.addEventListener("click", () => ((window as any).__clicked = "reject"));
+      });
+
+      const rejectedClicked = await clickConsentControl(page2, "optOut");
+      assert.equal(rejectedClicked, true, "reports a click happened");
+      assert.equal(await page2.evaluate(() => (window as any).__clicked), "reject", "clicked Reject, not Accept All");
+    } finally {
+      await page2.close();
+    }
+  });
+
+  test("clickConsentControl does not click anything when no consent container is present", async () => {
+    const page: Page = await browser.newPage();
+    try {
+      await page.setContent(
+        `<!doctype html><html><body><button id="unrelated">Yes, sign me up</button></body></html>`,
+        { waitUntil: "domcontentloaded" },
+      );
+      const clicked = await clickConsentControl(page, "optIn");
+      assert.equal(clicked, false, "no consent container on the page — nothing should be clicked");
+    } finally {
+      await page.close();
+    }
   });
 
   test("does NOT false-positive on a stray footer Settings link", async () => {

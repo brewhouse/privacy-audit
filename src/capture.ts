@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, Page, Request } from "playwright";
-import { detectConsentUi, forceCmpBanner, runAutoconsent } from "./consent.js";
+import { clickConsentControl, detectConsentUi, forceCmpBanner, runAutoconsent } from "./consent.js";
 import { sameSite } from "./domain.js";
 import { lookupVendor } from "./vendor-map.js";
 import type {
@@ -525,6 +525,11 @@ export async function capturePage(
     // Accept consent, then re-capture (§4.4).
     const accept = await runAutoconsent(page, "optIn", opts.log);
     if (accept.cmp && !capture.consentUi.cmpIdentified) capture.consentUi.cmpIdentified = accept.cmp;
+    if (!accept.performed) {
+      // autoconsent didn't act (no matching rule, or a shadow-DOM banner it can't reach) —
+      // fall back to clicking a real accept control ourselves.
+      await clickConsentControl(page, "optIn");
+    }
     await settle(page);
     capture.afterAccept = {
       requests: recorder.drain(),
@@ -559,7 +564,10 @@ export async function capturePage(
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       await settle(page);
       recorder.drain(); // discard pre-consent; we already have it
-      await runAutoconsent(page, "optOut", opts.log);
+      const reject = await runAutoconsent(page, "optOut", opts.log);
+      if (!reject.performed) {
+        await clickConsentControl(page, "optOut");
+      }
       await settle(page);
       capture.afterReject = {
         requests: recorder.drain(),

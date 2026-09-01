@@ -265,13 +265,37 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
         return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
       };
 
-      // CMP detection — data-driven, any signal matches.
+      // Several CMPs (e.g. WPConsent) render their banner inside an open Shadow DOM attached
+      // to a light-DOM host element, so document.querySelectorAll never sees the actual banner
+      // markup or its buttons — only the empty host. Recurse into every open shadowRoot so
+      // detection and control classification see what a real visitor sees. Closed shadow roots
+      // are unobservable by design and stay out of reach (rare for consent banners, which want
+      // to be interactive from page scripts).
+      const deepQueryAll = (selector: string, root: Document | Element | ShadowRoot = document): Element[] => {
+        const out: Element[] = [];
+        const walk = (node: Document | Element | ShadowRoot) => {
+          try {
+            out.push(...Array.from(node.querySelectorAll(selector)));
+          } catch {
+            /* invalid selector for this node type — skip */
+          }
+          for (const el of Array.from(node.querySelectorAll("*"))) {
+            const sr = (el as Element).shadowRoot;
+            if (sr) walk(sr);
+          }
+        };
+        walk(root);
+        return out;
+      };
+
+      // CMP detection — data-driven, any signal matches. Selector check is shadow-aware so a
+      // CMP whose marker element only exists inside a shadow tree still matches.
       let cmp: string | null = null;
       for (const sig of signatures) {
         const hasGlobal = sig.globals.some((k) => Boolean((window as any)[k]));
         const hasSelector = sig.selectors.some((sel) => {
           try {
-            return Boolean(document.querySelector(sel));
+            return deepQueryAll(sel).length > 0;
           } catch {
             return false;
           }
@@ -282,12 +306,10 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
         }
       }
 
-      // Find a visible consent container.
+      // Find a visible consent container, searching light DOM and every open shadow root.
       let banner: Element | null = null;
-      const containers = Array.from(
-        document.querySelectorAll(
-          '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[aria-label*="cookie" i],[role="dialog"],[role="alertdialog"]',
-        ),
+      const containers = deepQueryAll(
+        '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[aria-label*="cookie" i],[role="dialog"],[role="alertdialog"]',
       );
       for (const c of containers) {
         if (!isVisible(c)) continue;
@@ -306,13 +328,13 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
       // which also scopes control classification correctly.
       if (!banner) {
         const controlLabels = (el: Element): string[] =>
-          Array.from(el.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]'))
+          deepQueryAll('button,a,[role="button"],input[type="button"],input[type="submit"]', el)
             .filter((ctrl) => isVisible(ctrl))
             .map((ctrl) => (ctrl.textContent || (ctrl as HTMLInputElement).value || "").trim())
             .filter(Boolean);
         let bestScore = 0;
         let bestLen = Infinity;
-        for (const el of Array.from(document.querySelectorAll("div,section,aside,dialog,form"))) {
+        for (const el of deepQueryAll("div,section,aside,dialog,form")) {
           if (!isVisible(el)) continue;
           const text = (el.textContent || "").replace(/\s+/g, " ").trim();
           if (text.length < 12 || text.length > 800) continue; // banners are short blurbs
@@ -334,12 +356,21 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
         }
       }
 
-      // Classify controls ONLY within the consent container, by label/role.
+      // A light-DOM container found by selector/hint (e.g. WPConsent's #wpconsent-container)
+      // may itself be an empty shadow host — the real banner and its buttons live in its
+      // shadowRoot, not as its children. If the chosen container carries an open shadow root,
+      // switch to scanning that instead so control classification below sees real content.
+      if (banner && banner.shadowRoot) {
+        banner = banner.shadowRoot.firstElementChild ?? banner;
+      }
+
+      // Classify controls ONLY within the consent container (shadow-aware), by label/role.
       let acceptAll = false;
       let rejectAll = false;
       let settings = false;
       if (banner) {
-        const controls = Array.from(banner.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]'));
+        const scanRoot = (banner as any).shadowRoot ? (banner as any).shadowRoot : banner;
+        const controls = deepQueryAll('button,a,[role="button"],input[type="button"],input[type="submit"]', scanRoot);
         const texts = controls
           .filter((el) => isVisible(el))
           .map((el) => (el.textContent || (el as HTMLInputElement).value || "").trim())
@@ -359,5 +390,73 @@ export async function detectConsentUi(page: Page): Promise<ConsentUiInfo> {
     }, CMP_SIGNATURES);
   } catch {
     return { bannerPresent: false, acceptAll: false, rejectAll: false, settings: false, cmpIdentified: null };
+  }
+}
+
+/**
+ * Fallback click for CMPs whose banner renders inside an open Shadow DOM (e.g. WPConsent).
+ * @duckduckgo/autoconsent's in-page detection uses plain DOM queries that don't pierce shadow
+ * roots, so it silently no-ops on these — runAutoconsent reports performed:false and the
+ * before/after-consent split ends up comparing "before" against "still before" (Sakura
+ * Finetek, CPEDV, and Go Metro all showed this: banner correctly identified via its light-DOM
+ * host, but acceptAll/rejectAll always false and accept/reject passes indistinguishable from
+ * pre-consent). Only ever called when runAutoconsent didn't act, so a working autoconsent rule
+ * always wins; this purely covers the gap. Mirrors detectConsentUi's shadow-aware container
+ * scan so it only clicks a control that lives inside a recognized consent banner.
+ */
+export async function clickConsentControl(page: Page, action: ConsentAction): Promise<boolean> {
+  try {
+    return await page.evaluate((act: ConsentAction) => {
+      const ACCEPT = /\b(accept|allow|agree|got it|i understand|enable|yes)\b/i;
+      const REJECT = /\b(reject|decline|deny|refuse|disagree|necessary|essential|no thanks|opt[- ]?out)\b/i;
+      const CONTAINER_HINT = /(cookie|consent|gdpr|\bcmp\b|onetrust|cookiebot|complianz|borlabs|wpconsent|cookieyes|termly|osano|usercentrics)/i;
+
+      const isVisible = (el: Element): boolean => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+      };
+
+      const deepQueryAll = (selector: string, root: Document | Element | ShadowRoot = document): Element[] => {
+        const out: Element[] = [];
+        const walk = (node: Document | Element | ShadowRoot) => {
+          try {
+            out.push(...Array.from(node.querySelectorAll(selector)));
+          } catch {
+            /* invalid selector for this node type — skip */
+          }
+          for (const el of Array.from(node.querySelectorAll("*"))) {
+            const sr = (el as Element).shadowRoot;
+            if (sr) walk(sr);
+          }
+        };
+        walk(root);
+        return out;
+      };
+
+      const pattern = act === "optIn" ? ACCEPT : REJECT;
+
+      // Only ever click inside a container that looks like a consent banner — never fall back
+      // to scanning the whole page, so an unrelated "Yes"/"Accept" button elsewhere can't be
+      // mistaken for consent.
+      const containers = deepQueryAll(
+        '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[aria-label*="cookie" i],[role="dialog"],[role="alertdialog"]',
+      ).filter((c) => isVisible(c) && CONTAINER_HINT.test(`${c.id} ${c.className} ${c.getAttribute("aria-label") ?? ""}`));
+
+      for (const c of containers) {
+        const scanRoot = c.shadowRoot ?? c;
+        const controls = deepQueryAll('button,a,[role="button"],input[type="button"],input[type="submit"]', scanRoot);
+        for (const ctrl of controls) {
+          if (!isVisible(ctrl)) continue;
+          const text = (ctrl.textContent || (ctrl as HTMLInputElement).value || "").trim();
+          if (!text || !pattern.test(text)) continue;
+          (ctrl as HTMLElement).click();
+          return true;
+        }
+      }
+      return false;
+    }, action);
+  } catch {
+    return false;
   }
 }
