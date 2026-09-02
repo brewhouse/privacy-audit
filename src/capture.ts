@@ -327,9 +327,14 @@ export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl:
       const genericPolicyLabel = /^\s*polic(y|ies)\b|\b(website|site)\s+polic(y|ies)\b|\blegal(\s+(notice|information))?\b/i;
       const genericPolicyHref = /(website|site)-?polic(y|ies)|\/polic(y|ies)(?:[/#?]|$)|\/legal(?:[/#?-]|$)/i;
       // US state-privacy opt-out ("Do Not Sell or Share…", "Your Privacy Choices",
-      // "Limit the Use of My Sensitive Personal Information").
+      // "Limit the Use of My Sensitive Personal Information"). "sell"/"share" must be
+      // directly followed by "my" (optionally via "or share my") — real CCPA/CPRA controls
+      // always phrase it as "sell MY ...". Without that anchor, "do not sell" false-positives
+      // on ordinary body copy (e.g. an ORCA retail page reading "Stores do not sell pass
+      // products.", whose nearby "read more" link then gets misreported as the opt-out
+      // control — confirmed live on info.myorca.com).
       const usOptOutLabel =
-        /do\s+not\s+sell|do\s+not\s+share|your\s+privacy\s+choices|limit\s+the\s+use\s+of\s+my\s+sensitive|opt[-\s]?out\s+of\s+(sale|sharing)/i;
+        /do\s+not\s+sell\s+(or\s+share\s+)?my\b|do\s+not\s+share\s+my\b|your\s+privacy\s+choices|limit\s+the\s+use\s+of\s+my\s+sensitive|opt[-\s]?out\s+of\s+(sale|sharing)/i;
       const usOptOutHref = /do-?not-?sell|privacy-?choices|ccpa|cpra|opt-?out/i;
       let privacy: string | null = null;
       let cookie: string | null = null;

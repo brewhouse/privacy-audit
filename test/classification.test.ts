@@ -175,6 +175,17 @@ describe("US state-privacy coverage", () => {
     assert.equal(r.usOptOutLinkUrl, null);
   });
 
+  test("does NOT mistake ordinary body copy containing 'do not sell' for the CCPA control", async () => {
+    // Regression: info.myorca.com/retail reads "Stores do not sell pass products." — a
+    // nearby unrelated link was getting reported as the opt-out control because the old
+    // regex matched "do not sell" with no requirement that it be about the visitor's own
+    // ("my") information.
+    const r = await linksFor(
+      `<body><main><p>Stores do not sell pass products. <a href="/news/orca-card-transition/">Learn more</a></p></main></body>`,
+    );
+    assert.equal(r.usOptOutLinkUrl, null);
+  });
+
   test("finds a privacy statement behind a bare 'Policies' footer hub", async () => {
     // Municipal/agency sites commonly park the privacy statement under /policies/.
     const r = await linksFor(`<body><footer><a href="https://example.com/policies/">Policies</a></footer></body>`);
