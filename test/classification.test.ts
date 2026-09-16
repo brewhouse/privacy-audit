@@ -192,6 +192,21 @@ describe("US state-privacy coverage", () => {
     assert.match(String(r.privacyPolicyUrl), /\/policies\//);
   });
 
+  test("does NOT mistake a 'Legal Glossary' link for the privacy-policy hub", async () => {
+    // Regression: saclaw.org's nav has a "LEGAL GLOSSARY" link to /legal-glossary/. The old
+    // genericPolicyLabel matched any bare "legal", and genericPolicyHref treated the hyphen
+    // in "/legal-glossary/" as a valid boundary after "/legal" — together they reported the
+    // glossary page as the site's privacy policy instead of the real /policies/ hub.
+    const r = await linksFor(
+      `<body><footer>
+        <a href="https://example.com/legal-glossary/">LEGAL GLOSSARY</a>
+        <a href="https://example.com/services/continuing-legal-education-mcle/">Continuing Legal Education (MCLE)</a>
+        <a href="https://example.com/policies/">Policies</a>
+      </footer></body>`,
+    );
+    assert.match(String(r.privacyPolicyUrl), /\/policies\//, `expected /policies/, got ${r.privacyPolicyUrl}`);
+  });
+
   test("missing opt-out link is a finding when ad tech is present", () => {
     const cap = capture({
       preConsent: { ...EMPTY, requests: [req("https://connect.facebook.net/en_US/fbevents.js")] },

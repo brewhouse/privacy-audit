@@ -324,8 +324,8 @@ export async function detectPolicyLinks(page: Page): Promise<{ privacyPolicyUrl:
       // privacy statement on municipal and agency sites (observed on transit-agency
       // audits), so it counts as a last-resort candidate — but only as a short link
       // label, never from arbitrary body copy.
-      const genericPolicyLabel = /^\s*polic(y|ies)\b|\b(website|site)\s+polic(y|ies)\b|\blegal(\s+(notice|information))?\b/i;
-      const genericPolicyHref = /(website|site)-?polic(y|ies)|\/polic(y|ies)(?:[/#?]|$)|\/legal(?:[/#?-]|$)/i;
+      const genericPolicyLabel = /^\s*polic(y|ies)\b|\b(website|site)\s+polic(y|ies)\b|\blegal\s+(notice|information)\b/i;
+      const genericPolicyHref = /(website|site)-?polic(y|ies)|\/polic(y|ies)(?:[/#?]|$)|\/legal(?:[/#?]|$)/i;
       // US state-privacy opt-out ("Do Not Sell or Share…", "Your Privacy Choices",
       // "Limit the Use of My Sensitive Personal Information"). "sell"/"share" must be
       // directly followed by "my" (optionally via "or share my") — real CCPA/CPRA controls
