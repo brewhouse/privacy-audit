@@ -812,6 +812,7 @@ function withDefaults(report: AuditReport): AuditReport {
   const inventory = (report.inventory ?? []).map((i) => ({
     ...i,
     risk: i.risk ?? "none",
+    cookieless: Boolean(i.cookieless),
     firstSeenMs: typeof i.firstSeenMs === "number" ? i.firstSeenMs : null,
   }));
   const count = (total: number, beforeConsent: number): SectionCounts => ({

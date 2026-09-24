@@ -57,6 +57,11 @@ export interface InventoryItem {
   pages: string[];
   /** Exposure grade for this service (derived from category + whether it fires pre-consent). */
   risk: RiskLevel;
+  /**
+   * Cookieless, privacy-first analytics. Still listed and still marked as firing before
+   * consent, but excluded from the violation counts and the score (see vendor-map.ts).
+   */
+  cookieless: boolean;
   /** Earliest time (ms after navigation start) this service was seen on the representative page. */
   firstSeenMs: number | null;
 }

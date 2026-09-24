@@ -331,6 +331,50 @@ describe("report shape", () => {
   });
 });
 
+describe("cookieless analytics", () => {
+  test("Plausible and Font Awesome are named, not 'Unclassified'", () => {
+    const plausible = lookupVendor("https://plausible.io/js/script.js");
+    assert.equal(plausible?.name, "Plausible Analytics");
+    assert.equal(plausible?.category, "analytics");
+    assert.equal(plausible?.cookieless, true);
+    assert.equal(lookupVendor("https://ka-p.fontawesome.com/releases/v6.6.0/css/khtml.min.css")?.name, "Font Awesome");
+  });
+
+  test("cookieless analytics is listed but does not count as tracking before consent", () => {
+    const cap = capture({ preConsent: { ...EMPTY, requests: [req("https://plausible.io/js/script.js")] } });
+    const report = buildReport("https://example.com/", [cap], "test");
+    const item = report.inventory.find((i) => i.technology === "Plausible Analytics");
+    assert.equal(item?.firesBeforeConsent, true, "still reported as firing pre-consent");
+    assert.equal(item?.risk, "low", "graded low, not medium");
+    assert.equal(report.summary.trackersBeforeConsent, 0, "not counted as a tracker");
+    assert.equal(report.summary.privacyScore, 100, "no score penalty");
+    const titles = report.findings.map((f) => f.title);
+    assert.ok(titles.includes("Cookieless analytics loads before consent"), "surfaced as its own finding");
+    assert.ok(!titles.includes("Third-party tracking before consent"));
+    assert.ok(!titles.includes("No consent mechanism"));
+    assert.ok(!titles.includes("Global Privacy Control signal not honored"));
+  });
+
+  test("removing a real tracker cannot lower the score when cookieless analytics remains", () => {
+    // The perverse case this flag exists to prevent: BugHerd removed, Plausible left.
+    const withBugherd = capture({
+      preConsent: { ...EMPTY, requests: [req("https://sidebar.bugherd.com/embed.js"), req("https://plausible.io/js/script.js")] },
+    });
+    const without = capture({ preConsent: { ...EMPTY, requests: [req("https://plausible.io/js/script.js")] } });
+    const before = buildReport("https://example.com/", [withBugherd], "test").summary.privacyScore;
+    const after = buildReport("https://example.com/", [without], "test").summary.privacyScore;
+    assert.ok(after > before, `removing BugHerd must raise the score (${before} -> ${after})`);
+    assert.equal(after, 100);
+  });
+
+  test("ordinary analytics is still penalised", () => {
+    const cap = capture({ preConsent: { ...EMPTY, requests: [req("https://www.google-analytics.com/g/collect?v=2")] } });
+    const report = buildReport("https://example.com/", [cap], "test");
+    assert.equal(report.summary.trackersBeforeConsent, 1);
+    assert.ok(report.summary.privacyScore < 100);
+  });
+});
+
 describe("vendor map coverage", () => {
   test("ad-tech previously reported as 'Unclassified' is now named", () => {
     const cases: Array<[string, string, string]> = [

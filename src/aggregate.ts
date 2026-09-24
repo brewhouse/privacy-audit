@@ -36,6 +36,20 @@ import type {
 // Categories that count as a pre-consent tracking concern.
 const VIOLATION_CATEGORIES: ReadonlySet<Category> = new Set(["analytics", "marketing", "non-essential"]);
 
+/**
+ * Does this service count against the site?
+ *
+ * Cookieless analytics (Plausible, Fathom, Umami …) is deliberately excluded. It sets no
+ * cookie, holds no cross-site identifier and retains no personal data, so scoring it as
+ * "tracking before consent" would penalise a client for choosing the privacy-preserving
+ * option — and would mean removing a real tracker could *lower* their score. It is still
+ * listed in the inventory and raised as its own low-severity finding for human judgment,
+ * exactly as reCAPTCHA is handled (CLAUDE.md §6).
+ */
+function isViolation(item: InventoryItem): boolean {
+  return VIOLATION_CATEGORIES.has(item.category) && !item.cookieless;
+}
+
 // Hostnames that are strictly necessary and never count toward risk (§6).
 const NECESSARY_HOST_HINTS = [
   // consent platforms
@@ -188,6 +202,7 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
           firesBeforeConsent: false,
           injectionSource: pickInjectionSource(cap, vendor.name),
           inPolicy: "review", // human/legal step decides yes/no
+          cookieless: Boolean(vendor.cookieless),
           risk: "none",
           firstSeenMs: null,
         }));
@@ -205,6 +220,7 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
           firesBeforeConsent: false,
           injectionSource: pickInjectionSource(cap, dom),
           inPolicy: "review",
+          cookieless: false,
           risk: "none",
           firstSeenMs: null,
         }));
@@ -224,7 +240,7 @@ function buildInventory(captures: PageCapture[]): InventoryItem[] {
     .map(({ _pages, ...item }) => ({
       ...item,
       pages: [..._pages].sort(),
-      risk: riskFor(item.category, item.firesBeforeConsent),
+      risk: item.cookieless ? (item.firesBeforeConsent ? "low" : "none") : riskFor(item.category, item.firesBeforeConsent),
     }))
     .sort((a, b) => a.technology.localeCompare(b.technology));
 }
@@ -280,9 +296,7 @@ function buildConsentMechanism(captures: PageCapture[], inventory: InventoryItem
   const anyBanner = captures.some((c) => c.consentUi.bannerPresent);
 
   // Non-blocking: a banner exists but tracking still fired before consent.
-  const trackersBeforeConsent = inventory.some(
-    (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
-  );
+  const trackersBeforeConsent = inventory.some((i) => i.firesBeforeConsent && isViolation(i));
   const blocksBeforeConsent = anyBanner && !trackersBeforeConsent;
 
   // Consent Mode v2 default state (present ≠ gated, §6).
@@ -350,9 +364,7 @@ function buildFindingsAndRisk(
 
   // 1. Non-essential tracking before consent (analytics/marketing).
   const preTrackers = inventory.filter(
-    (i) =>
-      i.firesBeforeConsent &&
-      (i.category === "analytics" || i.category === "marketing"),
+    (i) => i.firesBeforeConsent && isViolation(i) && (i.category === "analytics" || i.category === "marketing"),
   );
   if (preTrackers.length) {
     risk += Math.min(60, preTrackers.length * 15);
@@ -369,7 +381,7 @@ function buildFindingsAndRisk(
   // 2. No effective consent gating — applies whether the banner is missing entirely
   //    (no mechanism) or present but non-blocking. A site with no banner at all is at
   //    least as exposed as one with a broken banner, so both are penalized.
-  const ungated = inventory.filter((i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category));
+  const ungated = inventory.filter((i) => i.firesBeforeConsent && isViolation(i));
   if (ungated.length && !consent.blocksBeforeConsent) {
     risk += 20;
     const noBanner = !consent.bannerPresent;
@@ -395,7 +407,7 @@ function buildFindingsAndRisk(
     for (const r of cap.afterReject.requests) {
       if (!r.isThirdParty) continue;
       const v = lookupVendor(r.url);
-      if (v && VIOLATION_CATEGORIES.has(v.category)) {
+      if (v && VIOLATION_CATEGORIES.has(v.category) && !v.cookieless) {
         declineResources.add(v.name);
         hit = true;
       }
@@ -507,7 +519,23 @@ function buildFindingsAndRisk(
     });
   }
 
-  // 8. reCAPTCHA timing — report, flag for human judgment, do not auto-high (§6).
+  // 8. Cookieless analytics — reported, not penalised (see isViolation). Mirrors the
+  //    reCAPTCHA finding: surface it, let a human decide whether consent is wanted.
+  const cookieless = inventory.filter((i) => i.cookieless && i.firesBeforeConsent);
+  if (cookieless.length) {
+    findings.push({
+      severity: "low",
+      title: "Cookieless analytics loads before consent",
+      detail:
+        "A privacy-first analytics tool loads before consent. It sets no cookies, uses no cross-site identifier and retains no personal data, " +
+        "so it is not counted as tracking in the score. Several regulators treat self-hosted or cookieless audience measurement as exempt from " +
+        "consent, but that is a judgment call for the client and their counsel.",
+      pages: pagesWithPath((i) => cookieless.includes(i)),
+      resources: cookieless.map((i) => i.technology),
+    });
+  }
+
+  // 9. reCAPTCHA timing — report, flag for human judgment, do not auto-high (§6).
   const recaptcha = inventory.find((i) => i.technology === "reCAPTCHA");
   if (recaptcha?.firesBeforeConsent) {
     findings.push({
@@ -586,9 +614,7 @@ function buildPageRisks(captures: PageCapture[], usOptOutLinkUrl: string | null)
         path: cap.path,
         score: privacyScore,
         issues: findings.map((f) => f.title),
-        trackersBeforeConsent: inventory.filter(
-          (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
-        ).length,
+        trackersBeforeConsent: inventory.filter((i) => i.firesBeforeConsent && isViolation(i)).length,
         cookiesBeforeConsent: cookies.filter((c) => c.beforeConsent && c.category !== "necessary").length,
         domainsBeforeConsent: domains.size,
       };
@@ -612,9 +638,7 @@ function buildSummary(
   privacyScore: number,
   beforeConsentDomains: string[],
 ): Summary {
-  const violatingBefore = inventory.filter(
-    (i) => i.firesBeforeConsent && VIOLATION_CATEGORIES.has(i.category),
-  );
+  const violatingBefore = inventory.filter((i) => i.firesBeforeConsent && isViolation(i));
   const cookiesBefore = cookies.filter(
     (c) => c.beforeConsent && c.category !== "necessary",
   );
@@ -663,6 +687,7 @@ function addLegacyUaService(inventory: InventoryItem[], captures: PageCapture[])
     injectionSource: "gtm",
     inPolicy: "review",
     pages: [...pages].sort(),
+    cookieless: false,
     risk: riskFor("analytics", firesBefore),
     firstSeenMs: null,
   });

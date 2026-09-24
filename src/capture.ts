@@ -388,7 +388,7 @@ function nonEssentialServices(requests: CapturedRequest[]): Set<string> {
   for (const r of requests) {
     if (!r.isThirdParty) continue;
     const v = lookupVendor(r.url);
-    if (v && (v.category === "analytics" || v.category === "marketing" || v.category === "non-essential")) {
+    if (v && !v.cookieless && (v.category === "analytics" || v.category === "marketing" || v.category === "non-essential")) {
       out.add(v.name);
     }
   }

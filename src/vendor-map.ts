@@ -20,6 +20,13 @@ export interface VendorEntry {
   purpose?: string;
   /** Where the data ends up. Defaults to `vendor` if omitted. */
   dataRecipient?: string;
+  /**
+   * Cookieless, privacy-first analytics: no cookies, no cross-site identifier, no personal
+   * data retained. Reported and flagged for human judgment, but NOT counted as a
+   * pre-consent violation — the same treatment reCAPTCHA gets (CLAUDE.md §6). Flagging a
+   * tool the client deliberately chose *because* it avoids tracking would be a false alarm.
+   */
+  cookieless?: boolean;
 }
 
 export const VENDOR_MAP: Record<string, VendorEntry> = {
@@ -97,6 +104,17 @@ export const VENDOR_MAP: Record<string, VendorEntry> = {
   "localiq.com": { vendor: "LocaliQ", name: "LocaliQ", category: "marketing" },
   "merchant-center-analytics.goog": { vendor: "Google", name: "Google Merchant Center", category: "marketing" },
   "imrworldwide.com": { vendor: "Nielsen", name: "Nielsen Measurement", category: "marketing" },
+
+  // --- Cookieless / privacy-first analytics (see VendorEntry.cookieless) ---
+  "plausible.io": { vendor: "Plausible", name: "Plausible Analytics", category: "analytics", cookieless: true },
+  "fathom.dns": { vendor: "Fathom", name: "Fathom Analytics", category: "analytics", cookieless: true },
+  "usefathom.com": { vendor: "Fathom", name: "Fathom Analytics", category: "analytics", cookieless: true },
+  "cdn.simpleanalytics.io": { vendor: "Simple Analytics", name: "Simple Analytics", category: "analytics", cookieless: true },
+  "simpleanalyticscdn.com": { vendor: "Simple Analytics", name: "Simple Analytics", category: "analytics", cookieless: true },
+  "umami.is": { vendor: "Umami", name: "Umami Analytics", category: "analytics", cookieless: true },
+
+  // --- Icon / font kits (functional) ---
+  "fontawesome.com": { vendor: "Fonticons", name: "Font Awesome", category: "functional" },
 
   // --- Analytics / heatmaps ---
   "crazyegg.com": { vendor: "Crazy Egg", name: "Crazy Egg", category: "analytics" },
@@ -224,7 +242,7 @@ export function lookupVendor(url: string): VendorEntry | null {
     if (haystack.includes(key)) {
       return {
         ...entry,
-        purpose: entry.purpose ?? PURPOSE_BY_CATEGORY[entry.category],
+        purpose: entry.purpose ?? (entry.cookieless ? "Analytics (cookieless)" : PURPOSE_BY_CATEGORY[entry.category]),
         dataRecipient: entry.dataRecipient ?? entry.vendor,
       };
     }
